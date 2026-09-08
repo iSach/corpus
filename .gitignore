@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+.env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Source material used to build Corpus, not part of the distributable app.
+BUILD_PROMPT.md
+Lit Review.dc.html
+support.js
+_ds/
+.thumbnail

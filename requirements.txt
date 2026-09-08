@@ -1,0 +1,4 @@
+fastapi==0.141.1
+uvicorn==0.52.4
+pypdf==6.18.0
+markdown-it-py==4.2.0
