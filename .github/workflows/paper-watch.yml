@@ -1,0 +1,44 @@
+name: Watch papers
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-paper-watch
+  cancel-in-progress: false
+
+jobs:
+  arxiv:
+    name: Discover arXiv papers
+    runs-on: ubuntu-latest
+    env:
+      CORPUS_INGEST_URL: ${{ vars.CORPUS_INGEST_URL }}
+      CORPUS_INGEST_TOKEN: ${{ secrets.CORPUS_INGEST_TOKEN }}
+      CORPUS_TOPICS: ${{ vars.CORPUS_TOPICS }}
+      CORPUS_WATCH_STATE: .automation/arxiv-watch.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Restore watcher state
+        id: state
+        uses: actions/cache/restore@v4
+        with:
+          path: .automation/arxiv-watch.json
+          key: corpus-arxiv-watch-v1-${{ github.run_id }}
+          restore-keys: |
+            corpus-arxiv-watch-v1-
+      - name: Discover and import
+        run: python scripts/watch_arxiv.py
+      - name: Save watcher state
+        if: success() && steps.state.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .automation/arxiv-watch.json
+          key: corpus-arxiv-watch-v1-${{ github.run_id }}

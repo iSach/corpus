@@ -27,6 +27,7 @@ Organize papers around your own projects with configurable fields. Corpus works 
 - Background PDF caching and extraction, provenance for imported papers, and near-duplicate detection.
 - JSON, CSV, and BibTeX export, a bounded read-only SQL console, and a Bearer-authenticated ingest API for scripts and agents.
 - One FastAPI process and SQLite database. No frontend build step or external service dependency.
+- Optional daily arXiv watch in GitHub Actions; define private topic queries and import matches through the protected ingest API.
 
 Corpus is released under the [MIT License](LICENSE). The bundled fonts retain their respective SIL Open Font License notices in `static/fonts/`.
 
@@ -98,6 +99,7 @@ The browser uses these routes:
 - `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
 - `POST /api/sql` runs a bounded read-only query. SQLite is opened in read-only mode with `query_only`, an authorizer, a 150 ms progress timeout, and a 1,000-row cap. `CORPUS_SQL_LOCAL_ONLY=1` adds a loopback client check.
 - `POST /api/ingest` is the agent-facing endpoint and is authenticated with the Bearer token described in [INGEST.md](INGEST.md).
+  The included [scheduled paper watch](docs/paper-watch.md) discovers arXiv matches for your GitHub-configured topics and sends them there.
 
 The production systemd and nginx templates are [docs/corpus.service](docs/corpus.service) and [docs/nginx.conf](docs/nginx.conf). They keep Uvicorn on loopback, run one non-root process, and put TLS and the public listener in nginx.
 
