@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">Corpus</title>
+  <desc id="desc">A paper index mark and the Corpus wordmark.</desc>
+  <rect width="920" height="240" rx="18" fill="#f6f1e7"/>
+  <g transform="translate(44 42)">
+    <path d="M20 28h105v116H20z" fill="#e5dccb" stroke="#201f1d" stroke-width="6"/>
+    <path d="M38 10h105v116H38z" fill="#ede5d7" stroke="#201f1d" stroke-width="6"/>
+    <path d="M56 0h105v116H56z" fill="#b68235" stroke="#201f1d" stroke-width="6"/>
+    <path d="M78 30h61M78 51h61M78 72h40" fill="none" stroke="#201f1d" stroke-width="6" stroke-linecap="square"/>
+    <circle cx="145" cy="105" r="10" fill="#b68235" stroke="#201f1d" stroke-width="5"/>
+  </g>
+  <g fill="#201f1d">
+    <text x="246" y="123" font-family="Georgia, 'Times New Roman', serif" font-size="94" letter-spacing="-4">Corpus</text>
+    <text x="252" y="163" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="3.4">YOUR RESEARCH LIBRARY</text>
+  </g>
+</svg>

@@ -1,6 +1,6 @@
 # Seed paper sources
 
-The seed set contains 34 real papers selected for the two research fields in `BUILD_PROMPT.md`: 17 papers on simulation-based inference and its reusable pretrained components, and 17 papers on diffusion-model composition, conditioning, inverse problems, and scientific applications. Metadata and abstracts were checked against the primary arXiv abstract pages listed below. The JSON abstracts are short paraphrases of the source abstracts; they are not verbatim paper text. Each record's PDF artifact points to the corresponding arXiv PDF. The code artifacts below point only to official author, lab, or project repositories whose README identifies the corresponding paper.
+The optional seed set contains 34 real papers selected as a demonstration library: 17 papers on simulation-based inference and its reusable pretrained components, and 17 papers on diffusion-model composition, conditioning, inverse problems, and scientific applications. It is not a default Corpus taxonomy. Metadata and abstracts were checked against the primary arXiv abstract pages listed below. The JSON abstracts are short paraphrases of the source abstracts; they are not verbatim paper text. Each record's PDF artifact points to the corresponding arXiv PDF. The code artifacts below point only to official author, lab, or project repositories whose README identifies the corresponding paper.
 
 ## Simulation-based inference and pretraining (`sbi-pretrain`)
 

@@ -19,7 +19,7 @@ curl -fsS -X POST http://127.0.0.1:8000/api/ingest \
       "abstract": "A short source-grounded abstract.",
       "canonical_url": "https://arxiv.org/abs/2401.01234",
       "arxiv_id": "2401.01234",
-      "field": "sbi-pretrain",
+      "field": "unfiled",
       "tags": ["neural-posterior", "calibration"],
       "artifacts": [
         {"kind": "pdf", "url": "https://arxiv.org/pdf/2401.01234.pdf"},

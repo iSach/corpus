@@ -7,9 +7,11 @@ from corpus.config import Settings
 from corpus.app import create_app
 from corpus.db import initialize,connection,add_run,validate_paper,write_paper
 
+TOPIC_FIELDS=[{'id':'sbi-pretrain','label':'SBI pretraining'},{'id':'diff-compose','label':'Diffusion composition'},{'id':'unfiled','label':'Unfiled'}]
+
 @pytest.fixture(scope='module')
 def site(tmp_path_factory):
-    settings=Settings(data_dir=tmp_path_factory.mktemp('browser-data'),dev=True,pdf_jobs=False)
+    settings=Settings(data_dir=tmp_path_factory.mktemp('browser-data'),dev=True,pdf_jobs=False,fields=TOPIC_FIELDS)
     initialize(settings)
     with connection(settings) as db:
         run=add_run(db,'browser-test','Synthetic fixture',3)

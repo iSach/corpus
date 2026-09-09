@@ -8,11 +8,18 @@ def seed(settings,cache_pdfs=False):
     initialize(settings)
     papers=json.loads((ROOT/'seed_papers.json').read_text())
     if isinstance(papers,dict): papers=papers['papers']
+    configured_fields={field['id'] for field in settings.fields}
+    fallback_field=next((field['id'] for field in settings.fields if field['id']=='unfiled'),settings.fields[0]['id'])
     accepted=duplicate=0
     with connection(settings) as db:
         db.execute('BEGIN IMMEDIATE')
         run=add_run(db,'seed','Verified foundational and related papers; see SEED_SOURCES.md',len(papers))
         for incoming in papers:
+            # The bundled library is an optional example, not a field template.
+            # Keep a caller's matching field IDs when present; otherwise file it
+            # under their generic default rather than adding topic-specific fields.
+            if incoming.get('field') not in configured_fields:
+                incoming={**incoming,'field':fallback_field}
             p=validate_paper(db,incoming,ingest=True)
             dup=find_duplicate(db,p,settings.dedupe_threshold)
             if dup:

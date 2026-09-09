@@ -16,7 +16,7 @@ class Settings:
     secure_cookie: bool = field(default_factory=lambda: os.getenv('CORPUS_SECURE_COOKIE','0')=='1')
     dev: bool = field(default_factory=lambda: os.getenv('CORPUS_DEV','0')=='1')
     pdf_jobs: bool = True
-    fields: list = field(default_factory=lambda: json.loads(os.getenv('CORPUS_FIELDS','[{"id":"sbi-pretrain","label":"SBI · pretraining"},{"id":"diff-compose","label":"Diffusion · composition"},{"id":"unfiled","label":"unfiled"}]')))
+    fields: list = field(default_factory=lambda: json.loads(os.getenv('CORPUS_FIELDS','[{"id":"unfiled","label":"Unfiled"}]')))
     def __post_init__(self):
         self.data_dir = Path(self.data_dir).resolve()
         self.cache_dir = Path(self.cache_dir or os.getenv('CORPUS_PDF_CACHE',self.data_dir/'pdfs')).resolve()

@@ -1,11 +1,34 @@
 # Corpus
 
-Corpus is a single-user, self-hosted literature review manager for two working areas: simulation-based inference pretraining and diffusion-model composition for scientific problems. It stores paper metadata, review scores, notes, tags, provenance, links to artifacts, cached PDFs, and page-aware PDF text. Search combines SQLite FTS5 with a small query language; the SQL console is a separately protected read-only escape hatch.
+<p align="center">
+  <img src="docs/assets/corpus-mark.svg" width="460" alt="Corpus — your research library">
+</p>
 
-Corpus is released under the [MIT License](LICENSE). The bundled fonts retain
-their respective SIL Open Font License notices in `static/fonts/`.
+<p align="center">
+  <a href="https://github.com/iSach/corpus/actions/workflows/test.yml"><img src="https://github.com/iSach/corpus/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/iSach/corpus/releases"><img src="https://img.shields.io/github/v/release/iSach/corpus?display_name=tag" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/iSach/corpus" alt="MIT License"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+"></a>
+  <a href="#production-deployment"><img src="https://img.shields.io/badge/deployment-self--hosted-252525" alt="Self-hosted"></a>
+</p>
 
-The application is one Python process: FastAPI serves the API and static client, SQLite stores the library, and a background worker downloads and extracts queued PDFs. There is no frontend build step and no external service dependency. The UI bundles its fonts and static assets locally, so it does not depend on a font CDN. Outbound network access is used only for explicit DOI/arXiv metadata lookup and optional PDF downloads.
+Corpus is a single-user, self-hosted research library for collecting, organizing, searching, and reviewing academic papers. Capture metadata from DOI or arXiv, add notes, tags, scores, and artifact links, cache PDFs for page-aware full-text search, and export a library you control.
+
+Organize papers around your own projects with configurable fields. Corpus works for literature reviews, research planning, and ongoing technical reading; it makes no assumptions about your discipline or workflow.
+
+![Corpus library view](docs/assets/corpus-library.png)
+
+## Highlights
+
+- DOI and arXiv metadata lookup, plus links to PDFs, code, data, slides, and other artifacts.
+- Configurable fields, tags, review states, numeric scores, facets, and saved smart lists.
+- Fast SQLite FTS5 search across titles, authors, abstracts, notes, tags, and extracted PDF text.
+- Boolean query language with score and year filters, sorting, and page-numbered PDF results.
+- Background PDF caching and extraction, provenance for imported papers, and near-duplicate detection.
+- JSON, CSV, and BibTeX export, a bounded read-only SQL console, and a Bearer-authenticated ingest API for scripts and agents.
+- One FastAPI process and SQLite database. No frontend build step or external service dependency.
+
+Corpus is released under the [MIT License](LICENSE). The bundled fonts retain their respective SIL Open Font License notices in `static/fonts/`.
 
 ## Run locally
 
@@ -14,7 +37,6 @@ Corpus expects Python 3.10 or newer. From the repository root:
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python seed.py
 .venv/bin/python run.py
 ```
 
@@ -25,7 +47,13 @@ jq -r .password data/initial-credentials.json
 rm data/initial-credentials.json
 ```
 
-`seed.py` loads the 34 verified papers in `seed_papers.json` and leaves personal scores and notes unset. By default seed PDFs remain linked but are not downloaded. Use `--cache-pdfs` if the PDF worker should queue them for download after the server starts. The command is idempotent: on an existing library, `--cache-pdfs` also requeues linked or failed seed PDFs, while a normal rerun leaves existing artifact status unchanged:
+New libraries start with a single `Unfiled` field. Define your own project areas with `CORPUS_FIELDS`; for example:
+
+```sh
+export CORPUS_FIELDS='[{"id":"thesis","label":"Thesis"},{"id":"lab-notes","label":"Lab notes"},{"id":"unfiled","label":"Unfiled"}]'
+```
+
+An optional, verified 34-paper library is available as a demonstration dataset. It covers simulation-based inference and diffusion models, but it does not define Corpus's default workflow. Run `seed.py` to add it; it is filed under your generic default unless you configure matching field IDs. Seed PDFs remain linked but are not downloaded unless you pass `--cache-pdfs`. The command is idempotent:
 
 ```sh
 .venv/bin/python seed.py --cache-pdfs
@@ -51,7 +79,7 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_PDF_CACHE` | `$CORPUS_DATA_DIR/pdfs` | Directory for cached PDFs. |
 | `CORPUS_CACHE_MAX_BYTES` | `10737418240` | PDF cache quota, 10 GiB by default. |
 | `CORPUS_DEDUPE_THRESHOLD` | `0.91` | Fuzzy title/author duplicate threshold, from `0.5` through `1`. Exact DOI and arXiv matches always win. |
-| `CORPUS_FIELDS` | SBI, diffusion, and `unfiled` defaults | JSON list of `{ "id": ..., "label": ... }` field definitions. Existing field IDs are retained when labels change. |
+| `CORPUS_FIELDS` | one `Unfiled` field | JSON list of `{ "id": ..., "label": ... }` field definitions. Define your own project areas; existing field IDs are retained when labels change. |
 | `CORPUS_PASSWORD` | empty | Login password. Set this in production to avoid generated credentials; changing it and restarting rotates the stored password and ends in-memory sessions. |
 | `CORPUS_INGEST_TOKEN` | generated file token | Bearer token for `POST /api/ingest`. If omitted, the token is generated in `data/ingest-token` with mode `0600`. |
 | `CORPUS_SQL_LOCAL_ONLY` | `0` | Set to `1` to allow the SQL console only when the resolved client address is loopback. |
@@ -78,7 +106,7 @@ The production systemd and nginx templates are [docs/corpus.service](docs/corpus
 The query bar accepts bare terms and these filters:
 
 ```text
-field:sbi-pretrain  tag:score-matching  venue:ICML  author:Raymond
+field:thesis        tag:to-read           venue:ICML  author:Raymond
 year:2025           rel:>7                state:unreviewed
 has:code            has:pdf              has:cached
 is:starred          pdf:"posterior collapse"

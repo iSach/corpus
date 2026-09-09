@@ -9,7 +9,7 @@ from corpus.db import initialize,connection,add_run,write_paper,validate_paper,s
 
 def main():
  with TemporaryDirectory(prefix='corpus-benchmark-') as temp:
-  settings=Settings(data_dir=temp,pdf_jobs=False,dev=True)
+  settings=Settings(data_dir=temp,pdf_jobs=False,dev=True,fields=[{'id':'sbi-pretrain','label':'SBI pretraining'},{'id':'diff-compose','label':'Diffusion composition'},{'id':'unfiled','label':'Unfiled'}])
   initialize(settings)
   with connection(settings) as db:
    run=add_run(db,'synthetic-benchmark',proposed=10000)

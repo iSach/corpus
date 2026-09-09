@@ -733,7 +733,7 @@
   function renderQueryBar() {
     const query = h('div', { class: 'query-wrap' },
       h('span', { class: 'query-prompt', ariaHidden: 'true' }, '>'),
-      h('input', { id: 'query-input', 'data-focus-key': 'query-input', class: 'query-input', type: 'search', value: state.q, placeholder: 'field:sbi-pretrain AND rel:>7 AND pdf:"posterior collapse"', ariaLabel: 'Search query', oninput: event => onQuery(event.target.value), onkeydown: event => { if (event.key === 'Escape') { event.target.value = ''; onQuery(''); } } }),
+      h('input', { id: 'query-input', 'data-focus-key': 'query-input', class: 'query-input', type: 'search', value: state.q, placeholder: 'tag:reading AND rel:>7 AND pdf:"key result"', ariaLabel: 'Search query', oninput: event => onQuery(event.target.value), onkeydown: event => { if (event.key === 'Escape') { event.target.value = ''; onQuery(''); } } }),
       h('span', { class: 'query-result' }, state.loadingPapers ? 'loading…' : `${state.total} / ${state.libraryTotal || state.total} rows${state.elapsed == null ? '' : ` · ${state.elapsed} ms`}`)
     );
     return h('div', { class: 'query-toolbar' }, query,
@@ -744,7 +744,7 @@
   }
 
   function renderSql() {
-    const defaultSql = 'select id, title, rel, reimpl from papers\nwhere field = \'sbi-pretrain\' and rel > 7\norder by reimpl desc;';
+    const defaultSql = "select id, title, rel, reimpl from papers\nwhere rel > 7\norder by reimpl desc;";
     if (!state.showConsole) return null;
     const sqlEditor = h('textarea', { id: 'sql-editor', 'data-focus-key': 'sql-editor', class: 'sql-editor', spellcheck: 'false', placeholder: defaultSql, value: state.sql.text, ariaLabel: 'SQL console', oninput: event => { state.sql.text = event.target.value; }, onkeydown: event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); runSql(Boolean(event.shiftKey)); } } });
     const controls = h('div', { class: 'sql-actions' },

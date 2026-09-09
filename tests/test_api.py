@@ -15,6 +15,12 @@ from corpus.config import Settings
 from corpus.db import connection
 from corpus import jobs, sources
 
+TOPIC_FIELDS = [
+    {"id": "sbi-pretrain", "label": "SBI pretraining"},
+    {"id": "diff-compose", "label": "Diffusion composition"},
+    {"id": "unfiled", "label": "Unfiled"},
+]
+
 
 def _settings(tmp_path, *, dev=True, password="test-password", ingest_token="test-ingest-token"):
     return Settings(
@@ -23,6 +29,7 @@ def _settings(tmp_path, *, dev=True, password="test-password", ingest_token="tes
         password=password,
         ingest_token=ingest_token,
         pdf_jobs=False,
+        fields=TOPIC_FIELDS,
     )
 
 
