@@ -205,10 +205,14 @@ def discover(
     return list(merged.values()), next_state
 
 
-def post_ingest(url: str, token: str, papers: list[dict[str, Any]], topics: list[dict[str, Any]], *, opener: Callable[..., Any] = urllib.request.urlopen) -> dict[str, Any]:
+def check_ingest_url(url: str) -> None:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise WatchError("CORPUS_INGEST_URL must be an HTTPS URL without credentials")
+
+
+def post_ingest(url: str, token: str, papers: list[dict[str, Any]], topics: list[dict[str, Any]], *, opener: Callable[..., Any] = urllib.request.urlopen) -> dict[str, Any]:
+    check_ingest_url(url)
     payload = json.dumps(
         {
             "agent": "corpus-arxiv-watch/1.0",
@@ -245,6 +249,9 @@ def run(environment: Mapping[str, str] = os.environ, *, fetch: Callable[[str, in
     if not topics:
         return {"topics": 0, "discovered": 0, "accepted": 0, "duplicate": 0, "rejected": 0}
     url, token = environment.get("CORPUS_INGEST_URL", ""), environment.get("CORPUS_INGEST_TOKEN", "")
+    # Check the destination before searching, so a broken setup fails even on
+    # days when arXiv has nothing new to send.
+    check_ingest_url(url)
     if not token:
         raise WatchError("CORPUS_INGEST_TOKEN is required when topics are configured")
     state_path = Path(environment.get("CORPUS_WATCH_STATE", ".automation/arxiv-watch.json"))
@@ -265,12 +272,28 @@ def run(environment: Mapping[str, str] = os.environ, *, fetch: Callable[[str, in
     return totals
 
 
-def main() -> int:
+UNCONFIGURED = "CORPUS_TOPICS is empty, so no topics were checked and nothing was imported. See docs/paper-watch.md."
+
+
+def report(level: str, message: str, environment: Mapping[str, str]) -> None:
+    """Print a message, as a workflow annotation when running in GitHub Actions."""
+    if environment.get("GITHUB_ACTIONS") == "true":
+        escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::{level} title=Corpus paper watch::{escaped}")
+    else:
+        print(f"Corpus paper watch: {message}", file=sys.stderr)
+
+
+def main(environment: Mapping[str, str] = os.environ) -> int:
     try:
-        print(json.dumps(run(), sort_keys=True))
+        result = run(environment)
     except WatchError as exc:
-        print(f"Corpus paper watch: {exc}", file=sys.stderr)
+        report("error", str(exc), environment)
         return 1
+    print(json.dumps(result, sort_keys=True))
+    # An unconfigured watch exits successfully, so make it visible on the run.
+    if not result["topics"]:
+        report("warning", UNCONFIGURED, environment)
     return 0
 
 

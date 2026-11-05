@@ -100,6 +100,34 @@ def test_run_remembers_seen_papers_and_merges_topic_tags(tmp_path):
     assert set(json.loads(state_path.read_text())["topics"].values().__iter__().__next__()) == {"2609.00001"}
 
 
+def test_main_warns_when_no_topics_are_configured(capsys):
+    assert arxiv_watch.main({"GITHUB_ACTIONS": "true"}) == 0
+    out = capsys.readouterr().out
+    assert '"topics": 0' in out
+    assert "::warning title=Corpus paper watch::CORPUS_TOPICS is empty" in out
+
+    assert arxiv_watch.main({}) == 0
+    assert "Corpus paper watch: CORPUS_TOPICS is empty" in capsys.readouterr().err
+
+
+def test_main_reports_configuration_errors_as_annotations(capsys):
+    assert arxiv_watch.main({"GITHUB_ACTIONS": "true", "CORPUS_TOPICS": "not json"}) == 1
+    assert "::error title=Corpus paper watch::CORPUS_TOPICS must be valid JSON" in capsys.readouterr().out
+
+
+def test_run_checks_ingest_url_before_searching():
+    def fetch(query, maximum):
+        raise AssertionError("arXiv should not be queried with a broken destination")
+
+    environment = {
+        "CORPUS_TOPICS": '[{"name":"A","query":"all:a"}]',
+        "CORPUS_INGEST_URL": "",
+        "CORPUS_INGEST_TOKEN": "test-token",
+    }
+    with pytest.raises(arxiv_watch.WatchError, match="HTTPS URL"):
+        arxiv_watch.run(environment, fetch=fetch, pause=lambda _seconds: None)
+
+
 def test_topic_configuration_is_validated():
     with pytest.raises(arxiv_watch.WatchError, match="unique"):
         arxiv_watch.load_topics('[{"name":"A","query":"all:a"},{"name":"a","query":"all:b"}]')
