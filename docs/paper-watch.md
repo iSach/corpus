@@ -36,11 +36,11 @@ For example, save this as a local file and upload it without placing it in shell
 Then run:
 
 ```sh
-gh variable set CORPUS_TOPICS --repo OWNER/REPO --body-file ./my-corpus-topics.json
+gh variable set CORPUS_TOPICS --repo OWNER/REPO < ./my-corpus-topics.json
 rm ./my-corpus-topics.json
 ```
 
-An empty or unset topic variable makes the workflow finish without contacting arXiv or Corpus. `field` must match a field configured on the server. Use `unfiled` until you have added custom fields. The watcher adds a `topic:<topic-name>` tag automatically.
+An empty or unset topic variable makes the workflow finish without contacting arXiv or Corpus; the run still succeeds but shows a warning annotation, so an unconfigured watch is visible. Once topics are set, a missing or non-HTTPS `CORPUS_INGEST_URL` or a missing token fails the run before arXiv is queried. `field` must match a field configured on the server. Use `unfiled` until you have added custom fields. The watcher adds a `topic:<topic-name>` tag automatically.
 
 The query is passed to the [arXiv API](https://info.arxiv.org/help/api/user-manual.html) as `search_query`. `all:"phrase"`, `cat:cs.LG`, `AND`, and `OR` are useful building blocks. Keep each topic focused; arXiv's returned papers are sorted by submission date and capped by `max_results` (1–100, default 25).
 
