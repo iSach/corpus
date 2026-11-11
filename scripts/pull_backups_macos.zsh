@@ -131,10 +131,10 @@ EOF
   plutil -lint "$PLIST" >/dev/null || return 1
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null
   launchctl bootstrap "gui/$UID" "$PLIST" || return 1
-  print "Installed: pulls every 4 hours and at login. Checking the first background run..."
+  print "Installed: pulls every 4 hours and at login. Latest log lines, after the first background run:"
   sleep 15
-  tail -n 2 "$LOG"
-  print "If the last line says 'Operation not permitted', macOS blocked background access to $DEST:"
+  tail -n 3 "$LOG"
+  print "If a line says 'Operation not permitted', macOS blocked background access to $DEST:"
   print "allow it under System Settings > Privacy & Security, or reinstall with a folder outside iCloud Drive."
 }
 
