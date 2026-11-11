@@ -174,7 +174,9 @@ def compile_query(source='', facets=None):
             predicate = "a.fetch_status='cached' AND a.kind='pdf'" if value == 'cached' else 'a.kind='+bound(value)
             return 'EXISTS (SELECT 1 FROM artifacts a WHERE a.paper_id=p.id AND '+predicate+')'
         if key == 'is':
-            if value != 'starred': raise QueryError('Expected is:starred', n.pos)
+            if value == 'venue-proposed':
+                return "EXISTS (SELECT 1 FROM venue_proposals v WHERE v.paper_id=p.id AND v.status='pending')"
+            if value != 'starred': raise QueryError('Expected is:starred or is:venue-proposed', n.pos)
             return 'p.starred=1'
         if key == 'pdf':
             if not negated: pdf_terms.append(value)

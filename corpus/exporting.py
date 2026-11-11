@@ -49,9 +49,12 @@ def export_papers(db, options):
             return ''.join(mapping.get(c,c) for c in str(value)).replace('\n',' ')
         entries=[]
         for p in papers:
-            data={'title':p['title'],'author':' and '.join(p['authors']),'year':p['year'],'url':p['canonical_url'],'doi':p['doi'],'eprint':p['arxiv_id']}
-            kind='inproceedings' if p['venue_class']=='conference' else 'article'
-            data['booktitle' if kind=='inproceedings' else 'journal']=p['venue']
+            data={'title':p['title'],'author':' and '.join(p['authors']),'year':p['year'],'url':p['canonical_url'],'doi':p['doi'],'eprint':p['arxiv_id'],'archiveprefix':'arXiv' if p['arxiv_id'] else None}
+            # Cite the published version when there is one; the eprint still points at arXiv.
+            kind='inproceedings' if p['venue_class'] in ('conference','other') else 'article'
+            venue=p['venue']
+            if p['venue_class']=='preprint' and p['arxiv_id']: venue='arXiv preprint arXiv:'+p['arxiv_id']
+            data['booktitle' if kind=='inproceedings' else 'journal']=venue
             keywords=p['tags']+['field='+project for project in p['projects']]
             if include.get('scores',True): keywords += [s+'='+str(p[s]) for s in SCORES if p.get(s) is not None]
             data['keywords']=', '.join(keywords)

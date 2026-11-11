@@ -973,15 +973,14 @@
   function bibtexForPaper(paper) {
     const key = paper.bibtex_key || paper.id || 'paper';
     const author = Array.isArray(paper.authors) ? paper.authors.join(' and ') : text(paper.authors);
-    const lines = [
-      `@article{${key},`,
-      `  title = {${text(paper.title)}},`,
-      `  author = {${author}},`,
-      paper.venue ? `  journal = {${paper.venue}},` : '',
-      paper.year == null ? '' : `  year = {${paper.year}},`,
-      paper.canonical_url ? `  url = {${paper.canonical_url}}` : paper.doi ? `  doi = {${paper.doi}}` : ''
-    ].filter(Boolean);
-    return `${lines.join('\n')}\n}`;
+    // Same rules as the server export: cite the published version, keep the eprint.
+    const proceedings = ['conference', 'other'].includes(paper.venue_class);
+    const venue = paper.venue_class === 'preprint' && paper.arxiv_id ? `arXiv preprint arXiv:${paper.arxiv_id}` : paper.venue;
+    const fields = [
+      ['title', text(paper.title)], ['author', author], [proceedings ? 'booktitle' : 'journal', venue], ['year', paper.year],
+      ['doi', paper.doi], ['eprint', paper.arxiv_id], ['archiveprefix', paper.arxiv_id ? 'arXiv' : ''], ['url', paper.canonical_url]
+    ].filter(([, value]) => value != null && value !== '');
+    return `@${proceedings ? 'inproceedings' : 'article'}{${key},\n${fields.map(([name, value]) => `  ${name} = {${value}}`).join(',\n')}\n}`;
   }
   async function copyPaperBibtex(paper) {
     try { await copyText(bibtexForPaper(paper)); toast('BibTeX copied'); }
@@ -1031,6 +1030,67 @@
       if (row) row.starred = !paper.starred;
       render();
     }).catch(error => toast(getError(error), true));
+  }
+
+  const VENUE_SOURCES = { crossref: 'Crossref', dblp: 'DBLP', openalex: 'OpenAlex', semanticscholar: 'Semantic Scholar' };
+  const VENUE_OUTCOMES = {
+    applied: 'Published version found and applied',
+    proposed: 'Possible published version found; confirm it below',
+    none: 'No published version found yet',
+    'rejected-before': 'Only a version you dismissed was found',
+  };
+  function showVenueResult(paperId, updated) {
+    if (!updated) return;
+    if (String(state.selectedId) === String(paperId)) state.selectedDetail = updated;
+    const row = state.papers.find(p => String(p.id) === String(paperId));
+    if (row) Object.assign(row, { venue: updated.venue, venue_class: updated.venue_class, year: updated.year, doi: updated.doi });
+  }
+  async function checkVenue(paper) {
+    state.venueBusy = paper.id; render();
+    try {
+      const data = await api('/api/papers/venue-check', { method: 'POST', body: { id: paper.id } });
+      showVenueResult(paper.id, data.paper);
+      const errors = (data.errors || []).join('; ');
+      if (data.status === 'error') toast(`Sources unavailable: ${errors}`, true);
+      else toast(VENUE_OUTCOMES[data.status] || 'Checked');
+    } catch (error) { toast(getError(error), true); }
+    finally { state.venueBusy = null; render(); }
+  }
+  async function decideVenue(paper, proposal, action) {
+    state.venueBusy = paper.id; render();
+    try {
+      const data = await api(`/api/venue-proposals/${encodeURIComponent(proposal.id)}`, { method: 'POST', body: { action } });
+      showVenueResult(paper.id, data.paper);
+      toast(action === 'apply' ? 'Published version applied' : 'Dismissed; it will not be proposed again');
+    } catch (error) { toast(getError(error), true); }
+    finally { state.venueBusy = null; render(); }
+  }
+  function renderPublication(paper) {
+    if (!paper.arxiv_id) return null;
+    const proposal = paper.venue_proposal, busy = state.venueBusy === paper.id;
+    const note = (...children) => h('div', { class: 'soft venue-note' }, ...children);
+    let body;
+    if (proposal) {
+      body = [
+        h('div', { class: 'venue-found' }, `${proposal.venue}${proposal.year ? ` ${proposal.year}` : ''}`),
+        proposal.year ? null : note(`Year not confirmed; applying keeps ${fmt(paper.year, 'the current year')}`),
+        note(`Possible published version · via ${(proposal.sources || []).join(', ')}`, proposal.url ? [' · ', h('a', { href: proposal.url, target: '_blank', rel: 'noopener' }, 'record ↗')] : null),
+        h('div', { class: 'detail-actions' },
+          h('button', { class: 'btn btn-primary', type: 'button', disabled: busy, onclick: () => decideVenue(paper, proposal, 'apply') }, 'APPLY'),
+          h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => decideVenue(paper, proposal, 'reject') }, 'NOT THIS'))
+      ];
+    } else if (paper.venue_class === 'preprint') {
+      body = [
+        note(paper.venue_checked ? `No published version found · checked ${formatDate(paper.venue_checked)}` : 'Not checked yet'),
+        paper.venue_check_error ? note(paper.venue_check_error) : null,
+        h('div', { class: 'detail-actions' }, h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => checkVenue(paper) }, busy ? 'CHECKING…' : 'CHECK NOW'))
+      ];
+    } else {
+      const source = String(paper.venue_source || '');
+      const how = source === 'manual' ? 'set by you' : source.startsWith('auto:') ? `found via ${source.slice(5).split('+').map(s => VENUE_SOURCES[s] || s).join(', ')}` : 'as imported';
+      body = [h('div', { class: 'venue-found' }, `${fmt(paper.venue)} ${fmt(paper.year, '')}`), note(`${how} · preprint arXiv:${paper.arxiv_id}`)];
+    }
+    return h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'PUBLISHED VERSION'), ...body);
   }
 
   function formatDate(value) {
@@ -1245,6 +1305,7 @@
     const noteNode = paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes ? document.createTextNode(paper.notes) : h('span', { class: 'soft' }, 'No note');
     return h('aside', { class: 'detail-pane', 'data-scroll-key': 'detail-pane' },
       h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.id)), h('span', null, (paper.projects || [paper.field]).map(fieldLabel).join(' · '))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'))),
+      renderPublication(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ARTIFACTS'), h('div', { class: 'artifact-list' }, paperLinks, artifactLinks)),
@@ -1546,7 +1607,7 @@
   }
 
   function syntaxHelp() {
-    return 'term · field:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:-added';
+    return 'term · field:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred · is:venue-proposed\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:-added';
   }
 
   function renderPasskeys() {

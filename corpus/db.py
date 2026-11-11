@@ -147,6 +147,8 @@ def validate_paper(db, incoming, existing=None, ingest=False):
     if p['state'] not in ('unreviewed','reviewed','archived'): raise ValueError('Invalid review state')
     if p['starred'] not in (True,False,None,0,1): raise ValueError('starred must be boolean')
     p['starred']=int(bool(p['starred']))
+    # A renamed venue needs a fresh class unless the caller chose one.
+    if existing and 'venue_class' not in incoming and p['venue']!=(existing.get('venue') or ''): p['venue_class']=None
     p['venue_class']=p['venue_class'] or ('preprint' if not p['venue'] or 'arxiv' in p['venue'].lower() else 'conference' if any(v in p['venue'].lower() for v in ('neurips','icml','iclr','cvpr','aistats','uai')) else 'journal')
     if p['venue_class'] not in ('conference','preprint','journal','other'): raise ValueError('Invalid venue class')
     proposed=incoming.get('proposed_scores',{})
@@ -227,6 +229,8 @@ def get_paper(db, paper_id, q=''):
     p['review']=summary(db,paper_id)
     decision=db.execute('SELECT * FROM inbox_decisions WHERE paper_id=? ORDER BY id DESC LIMIT 1',(paper_id,)).fetchone()
     p['last_decision']=dict(decision) if decision else None
+    from .venues import pending
+    p['venue_proposal']=pending(db,paper_id)
     terms=compile_query(q).pdf_terms
     p['pdf_hits']=[]
     if terms:

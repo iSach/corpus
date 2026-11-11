@@ -234,6 +234,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .detail-meta { color: var(--muted); font: 10.5px/1.25 var(--mono); }
 .detail-section { padding: 7px 10px; border-bottom: 1px solid var(--line); }
 .detail-section p { margin: 0; }
+.venue-found { font-weight: 600; }
+.venue-note { font: 9.5px/1.4 var(--mono); }
 .detail-score-row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; font: 11px/1.2 var(--mono); }
 .detail-score-label { width: 64px; flex: none; color: var(--muted); font-size: 10px; }
 .detail-score-track { flex: 1; height: 5px; background: var(--neutral-300); position: relative; }
