@@ -100,6 +100,13 @@ def test_run_remembers_seen_papers_and_merges_topic_tags(tmp_path):
     assert set(json.loads(state_path.read_text())["topics"].values().__iter__().__next__()) == {"2609.00001"}
 
 
+def test_workflow_reads_topics_from_a_secret():
+    # Variable values are printed in the public run log; secrets are masked.
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/paper-watch.yml").read_text()
+    assert "CORPUS_TOPICS: ${{ secrets.CORPUS_TOPICS }}" in workflow
+    assert "vars.CORPUS_TOPICS" not in workflow
+
+
 def test_main_warns_when_no_topics_are_configured(capsys):
     assert arxiv_watch.main({"GITHUB_ACTIONS": "true"}) == 0
     out = capsys.readouterr().out

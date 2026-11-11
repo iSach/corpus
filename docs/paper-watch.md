@@ -17,7 +17,9 @@ The pipeline passes the token directly from SSH to GitHub; it does not print or 
 
 ## Choose topics
 
-`CORPUS_TOPICS` is a GitHub Actions repository variable. It is JSON and stays out of the public repository, so the published project keeps its generic defaults. Each topic supplies an arXiv `search_query`, an existing Corpus field ID, optional tags, and a result cap.
+`CORPUS_TOPICS` is a GitHub Actions repository secret. It is JSON and stays out of the public repository, so the published project keeps its generic defaults. Each topic supplies an arXiv `search_query`, an existing Corpus field ID, optional tags, and a result cap.
+
+Use a secret rather than a repository variable. GitHub prints a job's environment at the start of each step's log, and anyone can read the logs of a public repository; secret values appear there as `***`, variable values in full.
 
 For example, save this as a local file and upload it without placing it in shell history:
 
@@ -36,11 +38,15 @@ For example, save this as a local file and upload it without placing it in shell
 Then run:
 
 ```sh
-gh variable set CORPUS_TOPICS --repo OWNER/REPO < ./my-corpus-topics.json
+jq -c . ./my-corpus-topics.json | gh secret set CORPUS_TOPICS --repo OWNER/REPO
 rm ./my-corpus-topics.json
 ```
 
-An empty or unset topic variable makes the workflow finish without contacting arXiv or Corpus; the run still succeeds but shows a warning annotation, so an unconfigured watch is visible. Once topics are set, a missing or non-HTTPS `CORPUS_INGEST_URL` or a missing token fails the run before arXiv is queried. `field` must match a field configured on the server. Use `unfiled` until you have added custom fields. The watcher adds a `topic:<topic-name>` tag automatically.
+`jq -c` stores the list on one line, so GitHub masks it as a single value. GitHub cannot show a secret again, so keep your own private copy if you plan to edit the list later.
+
+If an older setup stored `CORPUS_TOPICS` as a repository variable, set the secret, then remove the variable with `gh variable delete CORPUS_TOPICS --repo OWNER/REPO`. Logs of runs made before the change still contain the old value until you delete those runs.
+
+An empty or unset topic secret makes the workflow finish without contacting arXiv or Corpus; the run still succeeds but shows a warning annotation, so an unconfigured watch is visible. Once topics are set, a missing or non-HTTPS `CORPUS_INGEST_URL` or a missing token fails the run before arXiv is queried. `field` must match a field configured on the server. Use `unfiled` until you have added custom fields. The watcher adds a `topic:<topic-name>` tag automatically.
 
 The query is passed to the [arXiv API](https://info.arxiv.org/help/api/user-manual.html) as `search_query`. `all:"phrase"`, `cat:cs.LG`, `AND`, and `OR` are useful building blocks. Keep each topic focused; arXiv's returned papers are sorted by submission date and capped by `max_results` (1–100, default 25).
 
