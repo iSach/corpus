@@ -213,15 +213,17 @@ Copy `docs/nginx.conf` into the nginx site configuration, replace `literature.ex
 
 ### Nightly database backups
 
-`scripts/backup_db.py` copies the database with SQLite's online backup API, so the copy is consistent while Corpus keeps running. Each run writes `corpus-YYYYMMDDTHHMMSSZ.sqlite3` (UTC) through a temporary file, runs `PRAGMA integrity_check` on the copy, renames it into place, then deletes all but the newest `--keep` snapshots (default 14). If the check fails, the run exits non-zero, removes the partial copy and prunes nothing. Other files in the backup directory are never touched.
+`corpus/backup.py` (also `scripts/backup_db.py`) copies the database with SQLite's online backup API, so the copy is consistent while Corpus keeps running. Each run writes `corpus-YYYYMMDDTHHMMSSZ.sqlite3` (UTC) through a temporary file, runs `PRAGMA integrity_check` on the copy, renames it into place, then deletes all but the newest `--keep` snapshots (default 14). If the check fails, the run exits non-zero, removes the partial copy and prunes nothing. Other files in the backup directory are never touched.
 
 The PDF cache is not included. Extracted PDF text is stored in the database, so search keeps working after a restore; the PDF files can be fetched again from their source links, or kept with the full backup below.
 
-Install the templates, after adjusting paths and `--keep` in the service file if your layout differs:
+The module needs only the Python standard library, so the service runs a standalone copy of it with the system Python, and backups keep running whatever is deployed in `/opt/corpus`. Reinstall the copy when `corpus/backup.py` changes. Install it with the templates, after adjusting paths and `--keep` in the service file if your layout differs:
 
 ```sh
-sudo install -d -o corpus -g corpus -m 0750 /var/backups/corpus
-sudo install -o root -g root -m 0644 docs/corpus-backup.service docs/corpus-backup.timer /etc/systemd/system/
+sudo install -d -m 0755 /usr/local/lib/corpus-backup
+sudo install -m 0644 corpus/backup.py /usr/local/lib/corpus-backup/backup.py
+sudo install -d -o corpus -g corpus -m 0750 /var/backups/corpus/nightly
+sudo install -m 0644 docs/corpus-backup.service docs/corpus-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now corpus-backup.timer
 sudo systemctl start corpus-backup.service
@@ -229,13 +231,35 @@ systemctl list-timers corpus-backup.timer
 journalctl -u corpus-backup -n 5
 ```
 
-The timer runs at 03:15 server time with up to 15 minutes of random delay; `Persistent=true` catches up on a run missed while the machine was off. A failed run shows in `systemctl status corpus-backup` and the journal. Run the script only as `corpus`: reading a WAL database creates `-wal` and `-shm` files owned by the reader, and root-owned ones would stop the server from writing, so the script refuses to run as anyone but the database owner. Backups on the same disk do not survive losing that disk; copy `/var/backups/corpus` to another machine as well.
+The timer runs at 03:15 server time with up to 15 minutes of random delay; `Persistent=true` catches up on a run missed while the machine was off. A failed run shows in `systemctl status corpus-backup` and the journal. Run the script only as `corpus`: reading a WAL database creates `-wal` and `-shm` files owned by the reader, and root-owned ones would stop the server from writing, so the script refuses to run as anyone but the database owner. Backups on the same disk do not survive losing that disk; copy them to another machine as well, for example with the Mac pull below.
 
 Check a backup without changing it:
 
 ```sh
-sudo -u corpus /opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --verify /var/backups/corpus/corpus-20260101T031500Z.sqlite3
+sudo -u corpus /usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --verify /var/backups/corpus/nightly/corpus-20260101T031500Z.sqlite3
 ```
+
+### Copy backups to a Mac
+
+`scripts/pull_backups_macos.zsh` pulls finished snapshots to a Mac over SSH, by default into iCloud Drive. Its dedicated key may run only `backup.py --serve`, which lists snapshots and streams one: it gets no shell and cannot change anything on the server. A download is kept only if its SHA-256 matches the server's, and the Mac keeps its newest 30 snapshots (`CORPUS_PULL_KEEP`).
+
+On the server, let your SSH account read the snapshots, which the service writes as `0640` because of `--group-readable`:
+
+```sh
+sudo groupadd --system corpus-backup
+sudo usermod -aG corpus-backup "$USER"
+sudo chgrp corpus-backup /var/backups/corpus/nightly
+sudo chmod 2750 /var/backups/corpus/nightly
+sudo find /var/backups/corpus/nightly -name 'corpus-*.sqlite3' -exec chgrp corpus-backup {} + -exec chmod 0640 {} +
+```
+
+On the Mac, copy the script over and install it, passing the host you use with `ssh`:
+
+```sh
+zsh pull_backups_macos.zsh install your-server
+```
+
+It authorizes its key through your normal SSH login and runs a first pull. Then it installs a LaunchAgent that pulls every four hours and at login; a run missed while the Mac sleeps happens on wake. A second argument picks another folder, such as one on an external drive; runs are skipped while that drive is disconnected. The log is `~/Library/Logs/corpus-backup-pull.log`. If the background run logs `Operation not permitted`, macOS has blocked background access to that folder: allow it under **System Settings > Privacy & Security**, or choose a folder outside iCloud Drive. `zsh pull_backups_macos.zsh uninstall` removes the LaunchAgent and keeps the backups.
 
 ### Restore a nightly backup
 
@@ -243,9 +267,9 @@ Stop Corpus, snapshot the current state so the restore can be undone, clear the 
 
 ```sh
 sudo systemctl stop corpus
-sudo -u corpus /opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/pre-restore
+sudo -u corpus /usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/nightly/pre-restore
 sudo rm -f /var/lib/corpus/data/corpus.sqlite3-wal /var/lib/corpus/data/corpus.sqlite3-shm
-sudo install -o corpus -g corpus -m 0640 /var/backups/corpus/corpus-20260101T031500Z.sqlite3 /var/lib/corpus/data/corpus.sqlite3
+sudo install -o corpus -g corpus -m 0640 /var/backups/corpus/nightly/corpus-20260101T031500Z.sqlite3 /var/lib/corpus/data/corpus.sqlite3
 sudo systemctl start corpus
 ```
 

@@ -1,5 +1,7 @@
+import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -166,3 +168,101 @@ def test_script_runs_from_any_directory_and_reports_json(tmp_path):
     result = json.loads(run.stdout)
     assert Path(result["backup"]).parent == dest and result["kept"] == 1
     assert backup.integrity_errors(Path(result["backup"])) == []
+
+
+def test_group_readable_snapshots_for_a_pull_account(tmp_path):
+    src = tmp_path / "corpus.sqlite3"
+    make_db(src).close()
+    result = backup.run_backup(src, tmp_path / "backups", now=T0, group_readable=True)
+    assert stat.S_IMODE(Path(result["backup"]).stat().st_mode) == 0o640
+    assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o750
+
+
+def test_serve_lists_and_streams_only_finished_snapshots(tmp_path, monkeypatch, capsysbinary):
+    src = tmp_path / "corpus.sqlite3"
+    make_db(src).close()
+    dest = tmp_path / "backups"
+    paths = [Path(backup.run_backup(src, dest, now=T0 + timedelta(days=d))["backup"]) for d in (1, 0)]
+    (dest / "notes.txt").write_text("private")
+    (dest / ".corpus-x.partial").write_text("half")
+
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "list")
+    assert backup.main(["--serve", str(dest)]) == 0
+    lines = capsysbinary.readouterr().out.decode().splitlines()
+    assert lines == [f"{p.name} {p.stat().st_size} {hashlib.sha256(p.read_bytes()).hexdigest()}"
+                     for p in sorted(paths)]
+
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", f"get {paths[0].name}")
+    assert backup.main(["--serve", str(dest)]) == 0
+    assert capsysbinary.readouterr().out == paths[0].read_bytes()
+
+    for request in ["", "get notes.txt", "get ../corpus.sqlite3", "get .corpus-x.partial",
+                    f"get {paths[0].name} extra", "cat /etc/passwd", "list; rm -rf ~"]:
+        monkeypatch.setenv("SSH_ORIGINAL_COMMAND", request)
+        assert backup.main(["--serve", str(dest)]) == 2, request
+        assert capsysbinary.readouterr().out == b""
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "get corpus-20990101T000000Z.sqlite3")
+    assert backup.main(["--serve", str(dest)]) == 1
+
+
+PULL = ROOT / "scripts" / "pull_backups_macos.zsh"
+
+
+@pytest.mark.skipif(not (shutil.which("zsh") and shutil.which("shasum")), reason="needs zsh and shasum")
+def test_mac_pull_verifies_downloads_and_keeps_its_own_retention(tmp_path):
+    src = tmp_path / "corpus.sqlite3"
+    make_db(src).close()
+    server = tmp_path / "server"
+    for day in range(4):
+        backup.run_backup(src, server, now=T0 + timedelta(days=day))
+    # Stand-in for ssh: run the real forced command for whatever follows the host.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "ssh").write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "args = sys.argv[1:]\n"
+        "os.environ['SSH_ORIGINAL_COMMAND'] = ' '.join(args[args.index('corpus-test') + 1:])\n"
+        "if os.environ.get('CORRUPT') and args[-2] == 'get':\n"
+        "    sys.stdout.write('tampered'); sys.exit(0)\n"
+        f"os.execv(sys.executable, [sys.executable, {str(ROOT / 'corpus' / 'backup.py')!r}, '--serve', {str(server)!r}])\n"
+    )
+    (bin_dir / "ssh").chmod(0o755)
+    mac = tmp_path / "icloud" / "Corpus Backups"
+    mac.parent.mkdir()
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", CORPUS_PULL_HOST="corpus-test",
+               CORPUS_PULL_DEST=str(mac), CORPUS_PULL_KEEP="2", CORPUS_PULL_KEY=str(tmp_path / "key"))
+
+    def pull(**extra):
+        return subprocess.run(["zsh", str(PULL), "pull"], env={**env, **extra},
+                              capture_output=True, text=True, timeout=60)
+
+    roomy = tmp_path / "icloud" / "keep everything"
+    run = pull(CORPUS_PULL_DEST=str(roomy), CORPUS_PULL_KEEP="30")
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "fetched 4, pruned 0, keeping 4" in run.stdout
+    assert sorted(p.name for p in roomy.iterdir()) == [stamp(d) for d in range(4)]
+
+    run = pull()
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "fetched 2, pruned 0, keeping 2" in run.stdout
+    assert sorted(p.name for p in mac.iterdir()) == [stamp(2), stamp(3)]
+    assert all((mac / n).read_bytes() == (server / n).read_bytes() for n in (stamp(2), stamp(3)))
+    assert stat.S_IMODE(mac.stat().st_mode) == 0o700
+    assert stat.S_IMODE((mac / stamp(3)).stat().st_mode) == 0o600
+
+    assert "fetched 0, pruned 0, keeping 2" in pull().stdout  # nothing is fetched twice
+
+    backup.run_backup(src, server, now=T0 + timedelta(days=4))
+    run = pull(CORRUPT="1")
+    assert run.returncode == 1
+    assert f"download of {stamp(4)} failed or did not match its checksum" in run.stdout
+    assert sorted(p.name for p in mac.iterdir()) == [stamp(2), stamp(3)]
+
+    run = pull()
+    assert "fetched 1, pruned 1, keeping 2" in run.stdout
+    assert sorted(p.name for p in mac.iterdir()) == [stamp(3), stamp(4)]
+
+    run = pull(CORPUS_PULL_DEST=str(tmp_path / "unplugged" / "Corpus Backups"))
+    assert run.returncode == 1 and "is not available (drive disconnected?)" in run.stdout
+    assert not (tmp_path / "unplugged").exists()
