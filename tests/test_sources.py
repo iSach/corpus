@@ -80,7 +80,7 @@ def test_arxiv_atom_metadata_is_normalized_without_network(monkeypatch):
 
 def test_generic_metadata_urls_are_rejected():
     with pytest.raises(sources.SourceError, match="generic URLs"):
-        sources.fetch_metadata("https://publisher.example/articles/10.5555/not-recognized")
+        sources.fetch_metadata("https://publisher.example/articles/not-recognized")
 
     with pytest.raises(sources.SourceError, match="http or https"):
         sources.fetch_metadata("ftp://doi.org/10.5555/abc")

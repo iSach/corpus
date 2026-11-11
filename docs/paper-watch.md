@@ -1,6 +1,6 @@
 # Scheduled paper watch
 
-Corpus can check arXiv every day and add new matches to your own library. The watcher runs in GitHub Actions, so it does not depend on an open desktop app or a machine at home. It sends metadata only to the dedicated `POST /api/ingest` endpoint; browser passwords are never used.
+Corpus can check arXiv every day and queue new matches in your Inbox for approval. The watcher runs in GitHub Actions, so it does not depend on an open desktop app or a machine at home. It sends metadata only to the dedicated `POST /api/ingest` endpoint; browser passwords are never used.
 
 The workflow lives at [.github/workflows/paper-watch.yml](../.github/workflows/paper-watch.yml). It runs daily at 07:17 UTC and can also be started manually from the **Actions → Watch papers → Run workflow** page. GitHub may delay scheduled workflows during periods of high load.
 
@@ -50,4 +50,4 @@ The watcher queries topics sequentially with a three-second pause, normalizes ti
 
 A small GitHub Actions cache remembers the arXiv IDs already sent for each topic. If that cache is evicted, Corpus is still the final safety net: it deduplicates exact arXiv and DOI matches before it creates papers. The process imports new records; it intentionally does not overwrite metadata when arXiv publishes a later version of an existing paper.
 
-The workflow summary shows accepted, duplicate, and rejected counts in its `Discover and import` log. Check the Corpus **Stats** screen for the associated ingest run and provenance.
+The workflow summary shows accepted, duplicate, and rejected counts in its `Discover and import` log. Accepted matches wait in **Inbox → Pending** until you approve or dismiss them; the **Stats** screen shows the associated ingest run and provenance.

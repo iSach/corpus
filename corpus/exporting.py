@@ -12,9 +12,11 @@ def export_papers(db, options):
         ids=options.get('ids',[])
         if not isinstance(ids,list) or len(ids)>10000 or any(not isinstance(x,str) for x in ids): raise ValueError('ids must be a list of at most 10,000 paper IDs')
         where='p.id IN ('+','.join('?' for _ in ids)+')' if ids else '0'; params=ids
-    papers=[paper_dict(r) for r in db.execute('SELECT p.* FROM papers p WHERE '+where+' ORDER BY '+c.order,params)]
+    papers=[paper_dict(r) for r in db.execute("SELECT p.* FROM papers p WHERE p.admission='approved' AND ("+where+') ORDER BY '+c.order,params)]
     byid={p['id']:p for p in papers}
-    for p in papers: p['tags']=[]; p['artifacts']=[]
+    for p in papers: p['tags']=[]; p['artifacts']=[]; p['projects']=[]
+    for row in db.execute('SELECT paper_id,field_id FROM paper_projects ORDER BY field_id'):
+        if row['paper_id'] in byid: byid[row['paper_id']]['projects'].append(row['field_id'])
     for r in db.execute('SELECT pt.paper_id,t.name FROM paper_tags pt JOIN tags t ON t.id=pt.tag_id ORDER BY t.name'):
         if r['paper_id'] in byid: byid[r['paper_id']]['tags'].append(r['name'])
     for r in db.execute('SELECT * FROM artifacts ORDER BY id'):
@@ -29,7 +31,7 @@ def export_papers(db, options):
         if not include.get('notes',True): p.pop('notes',None)
     if fmt=='json': text=json.dumps(papers,ensure_ascii=False,indent=2); ext='json'; mime='application/json'
     elif fmt=='csv':
-        columns=['id','title','authors','venue','year','field','state','canonical_url','arxiv_id','doi','tags']
+        columns=['id','title','authors','venue','year','field','projects','state','canonical_url','arxiv_id','doi','tags']
         if include.get('scores',True): columns+=list(SCORES)
         if include.get('notes',True): columns+=['notes']
         columns+=['artifacts']
@@ -50,7 +52,7 @@ def export_papers(db, options):
             data={'title':p['title'],'author':' and '.join(p['authors']),'year':p['year'],'url':p['canonical_url'],'doi':p['doi'],'eprint':p['arxiv_id']}
             kind='inproceedings' if p['venue_class']=='conference' else 'article'
             data['booktitle' if kind=='inproceedings' else 'journal']=p['venue']
-            keywords=p['tags']+['field='+p['field']]
+            keywords=p['tags']+['field='+project for project in p['projects']]
             if include.get('scores',True): keywords += [s+'='+str(p[s]) for s in SCORES if p.get(s) is not None]
             data['keywords']=', '.join(keywords)
             if include.get('notes',True): data['annote']=p.get('notes','')

@@ -25,7 +25,7 @@ def seed(settings,cache_pdfs=False):
             if dup:
                 duplicate+=1
                 db.execute('INSERT INTO provenance(paper_id,run_id,query,status,similarity,reason) VALUES(?,?,?,?,?,?)',(dup['id'],run,'Verified seed bibliography','duplicate',dup['similarity'],dup['reason']))
-                if cache_pdfs: db.execute("UPDATE artifacts SET fetch_status='pending' WHERE paper_id=? AND kind='pdf' AND fetch_status IN ('linked','failed')",(dup['id'],))
+                if cache_pdfs: db.execute("UPDATE artifacts SET fetch_status='pending' WHERE paper_id=? AND kind='pdf' AND fetch_status IN ('linked','failed') AND paper_id IN (SELECT id FROM papers WHERE admission='approved')",(dup['id'],))
                 continue
             pid=write_paper(db,p,run,query='Verified seed bibliography')
             if not cache_pdfs: db.execute("UPDATE artifacts SET fetch_status='linked' WHERE paper_id=? AND kind='pdf'",(pid,))

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import os, json
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 @dataclass
@@ -14,10 +15,19 @@ class Settings:
     ingest_token: str = field(default_factory=lambda: os.getenv('CORPUS_INGEST_TOKEN',''))
     sql_local_only: bool = field(default_factory=lambda: os.getenv('CORPUS_SQL_LOCAL_ONLY','0')=='1')
     secure_cookie: bool = field(default_factory=lambda: os.getenv('CORPUS_SECURE_COOKIE','0')=='1')
+    passkey_origin: str = field(default_factory=lambda: os.getenv('CORPUS_PASSKEY_ORIGIN',''))
     dev: bool = field(default_factory=lambda: os.getenv('CORPUS_DEV','0')=='1')
     pdf_jobs: bool = True
     fields: list = field(default_factory=lambda: json.loads(os.getenv('CORPUS_FIELDS','[{"id":"unfiled","label":"Unfiled"}]')))
     def __post_init__(self):
+        self.passkey_origin = self.passkey_origin.rstrip('/')
+        if self.passkey_origin:
+            origin = urlsplit(self.passkey_origin)
+            local = origin.hostname == 'localhost'
+            if (not origin.hostname or origin.username or origin.password or origin.path or origin.query or origin.fragment
+                    or (origin.scheme != 'https' and not (origin.scheme == 'http' and local))):
+                raise ValueError('CORPUS_PASSKEY_ORIGIN must be an HTTPS origin (or http://localhost for development)')
+            origin.port  # Validate malformed ports at startup.
         self.data_dir = Path(self.data_dir).resolve()
         self.cache_dir = Path(self.cache_dir or os.getenv('CORPUS_PDF_CACHE',self.data_dir/'pdfs')).resolve()
         if not 0.5 <= self.dedupe_threshold <= 1: raise ValueError('Dedupe threshold must be 0.5–1')
@@ -26,3 +36,5 @@ class Settings:
             raise ValueError('CORPUS_FIELDS must be a nonempty list of {id,label}')
     @property
     def database(self): return self.data_dir/'corpus.sqlite3'
+    @property
+    def passkey_rp_id(self): return urlsplit(self.passkey_origin).hostname if self.passkey_origin else None

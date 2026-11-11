@@ -144,6 +144,13 @@ def _recognize(identifier: str) -> _Identifier:
         if arxiv_id:
             return _Identifier("arxiv", arxiv_id)
 
+    # Recognize DOI-bearing publisher URLs without fetching arbitrary web pages.
+    match = re.search(r"(?:^|/)(10\.\d{4,9}/[^?#]+)", urllib.parse.unquote(parsed.path), re.IGNORECASE)
+    if match:
+        doi = _clean_doi(match.group(1))
+        if doi:
+            return _Identifier("doi", doi)
+
     # Some publishers expose the DOI in a query parameter.  This is still
     # recognizable; an otherwise generic URL should never be fetched as metadata.
     query = urllib.parse.parse_qs(parsed.query)

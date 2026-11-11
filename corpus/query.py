@@ -158,7 +158,9 @@ def compile_query(source='', facets=None):
             if name not in SORTS: raise QueryError('Unknown sort column: ' + name, n.pos)
             if sorts: raise QueryError('Use only one sort directive', n.pos)
             sorts.append(value); return '1'
-        if key in ('field','venue','state'):
+        if key in ('field','project'):
+            return 'EXISTS (SELECT 1 FROM paper_projects pp WHERE pp.paper_id=p.id AND pp.field_id='+bound(value)+' COLLATE NOCASE)'
+        if key in ('venue','state'):
             if key == 'state' and value not in ('unreviewed','reviewed','archived'):
                 raise QueryError('Unknown review state', n.pos)
             return f'p.{key} = {bound(value)} COLLATE NOCASE'
@@ -189,7 +191,9 @@ def compile_query(source='', facets=None):
             continue
         if not isinstance(values,list) or len(values)>100 or any(not isinstance(v,str) for v in values): raise QueryError('Facet values must be a list of strings')
         if not values: continue
-        if key in ('field','state','year','venue_class'):
+        if key=='field':
+            where += ' AND EXISTS (SELECT 1 FROM paper_projects pp WHERE pp.paper_id=p.id AND pp.field_id IN ('+','.join(bound(v) for v in values)+'))'
+        elif key in ('state','year','venue_class'):
             if key == 'year':
                 try: values = [int(v) for v in values]
                 except ValueError: raise QueryError('Year facets must be integers')

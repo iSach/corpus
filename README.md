@@ -21,13 +21,16 @@ Organize papers around your own projects with configurable fields. Corpus works 
 ## Highlights
 
 - DOI and arXiv metadata lookup, plus links to PDFs, code, data, slides, and other artifacts.
-- Configurable fields, tags, review states, numeric scores, facets, and saved smart lists.
+- Fast title/author search, multi-project capture, bulk link lookup, and a browser bookmark button for adding papers from open tabs.
+- Research topics with editable descriptions, tags, review states, numeric scores, facets, and saved smart lists.
 - Fast SQLite FTS5 search across titles, authors, abstracts, notes, tags, and extracted PDF text.
 - Boolean query language with score and year filters, sorting, and page-numbered PDF results.
 - Background PDF caching and extraction, provenance for imported papers, and near-duplicate detection.
+- An approval Inbox for automatic discoveries, with approve/dismiss, undo, topic filters, and a separate reading status.
 - JSON, CSV, and BibTeX export, a bounded read-only SQL console, and a Bearer-authenticated ingest API for scripts and agents.
 - One FastAPI process and SQLite database. No frontend build step or external service dependency.
-- Optional daily arXiv watch in GitHub Actions; define private topic queries and import matches through the protected ingest API.
+- Optional daily arXiv watch in GitHub Actions; define private topic queries and send matches to the Inbox through the protected ingest API.
+- Native passkey sign-in, including iCloud Keychain, with automatic sign-in attempts after registration and a password fallback.
 
 Corpus is released under the [MIT License](LICENSE). The bundled fonts retain their respective SIL Open Font License notices in `static/fonts/`.
 
@@ -48,11 +51,37 @@ jq -r .password data/initial-credentials.json
 rm data/initial-credentials.json
 ```
 
-New libraries start with a single `Unfiled` field. Define your own project areas with `CORPUS_FIELDS`; for example:
+New libraries start with a single `Unfiled` field. Use **Topics** in the app to add research areas and keep a full research brief with each one. Topics appear in the Add/Edit form and the library filters, including topics with no papers yet. Their stable IDs are used by the query language and ingest API as `field` values.
+
+You can also define project areas at startup with `CORPUS_FIELDS`; for example:
 
 ```sh
 export CORPUS_FIELDS='[{"id":"thesis","label":"Thesis"},{"id":"lab-notes","label":"Lab notes"},{"id":"unfiled","label":"Unfiled"}]'
 ```
+
+Names explicitly listed in `CORPUS_FIELDS` are reapplied on startup. Topics added in the app and all topic descriptions persist in SQLite independently of that setting.
+
+## Add papers quickly
+
+Open **Add** to search by title or author, or paste a DOI, arXiv ID, or paper link into the search bar. Choose one or several projects in the left rail, then click **ADD** beside a result. Project choices stay selected across papers and reloads. Saved papers appear immediately; arXiv and Crossref results arrive independently, so one slow source does not block other matches. Recent catalog lookups are cached for ten minutes. You can limit a search to titles or authors and request more results.
+
+Select several result checkboxes and use **ADD SELECTED**, or press **Ctrl/⌘ + Enter** to add the selection (or the focused result). New manual captures enter the library unread. Existing papers gain the selected project memberships while retaining their notes, scores, reading status, and cached files. **ADDED** means the paper already belongs to every currently selected project. Possible title duplicates offer **USE EXISTING** or **KEEP SEPARATE**; pending and dismissed suggestions require an explicit **APPROVE & ADD** or **RESTORE & ADD** action.
+
+For many tabs, use **Paste links**: paste up to 30 URLs or identifiers, one per line, look up their metadata, review the matches, and add them together. arXiv identifiers are resolved in one grouped request. Unsupported links keep a visible error while valid matches remain addable. DOI-bearing publisher URLs are recognized without fetching arbitrary web pages.
+
+For individual tabs, drag **SAVE TO CORPUS** from the project rail onto your browser's bookmarks bar. Click that bookmark while viewing a paper to open its Add view with the link prefilled. If the link has no recognizable identifier, its page title is used to search instead. This shortcut opens a preview and requires an explicit Add action. If a site blocks the bookmark button, paste its URL or title in Add.
+
+**Manual entry** retains the detailed metadata, notes, scores, and artifact editor. Existing paper edits also support multiple project checkboxes. On phones, **PROJECTS** opens the project selector and tapping a result reveals its abstract.
+
+Projects use the existing topic IDs. `papers.field` remains the primary topic for compatibility and topic-specific assessments; `paper_projects` records all memberships. Both `field:` and `project:` search all memberships, and project filters, statistics, JSON/CSV/BibTeX exports include secondary projects without duplicating a paper in the library total.
+
+The repository includes an example **Uncertainty calibration** topic that shows the shape of a research brief and its relevance criteria. It is in [topics/uncertainty-calibration.json](topics/uncertainty-calibration.json); copy it as a starting point for your own topics. Add or update a topic file in the configured library with:
+
+```sh
+.venv/bin/python -m corpus.topics topics/uncertainty-calibration.json
+```
+
+The command uses the same environment configuration as the server and can be repeated without creating duplicate topics. It adds the topic without importing papers or changing existing paper assignments.
 
 An optional, verified 34-paper library is available as a demonstration dataset. It covers simulation-based inference and diffusion models, but it does not define Corpus's default workflow. Run `seed.py` to add it; it is filed under your generic default unless you configure matching field IDs. Seed PDFs remain linked but are not downloaded unless you pass `--cache-pdfs`. The command is idempotent:
 
@@ -85,17 +114,55 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_INGEST_TOKEN` | generated file token | Bearer token for `POST /api/ingest`. If omitted, the token is generated in `data/ingest-token` with mode `0600`. |
 | `CORPUS_SQL_LOCAL_ONLY` | `0` | Set to `1` to allow the SQL console only when the resolved client address is loopback. |
 | `CORPUS_SECURE_COOKIE` | `0` | Set to `1` when the app is served through HTTPS. |
+| `CORPUS_PASSKEY_ORIGIN` | empty (disabled) | Exact public HTTPS origin, such as `https://literature.example.org`. The hostname becomes the passkey relying-party ID. Only `http://localhost:PORT` is allowed for local passkey development. |
 | `CORPUS_DEV` | `0` | Disable login for loopback development only. Prefer `run.py --dev`. |
 
 Each PDF download is bounded to 50 MiB, each extracted PDF to 1,000 pages and 20 million characters, and request bodies to 2 MiB. The cache quota is checked before a download begins.
+
+## Passkey sign-in
+
+Set `CORPUS_PASSKEY_ORIGIN` to the site's HTTPS origin, enable `CORPUS_SECURE_COOKIE=1`, and restart Corpus. Sign in with your password, open **PASSKEYS**, enter your current password, and choose **ADD PASSKEY**. On Apple devices, save the passkey with iCloud Keychain; Apple describes its device and syncing support in the [passkeys overview](https://developer.apple.com/passkeys/). The browser and operating system choose the passkey provider; Corpus does not require an Apple account integration.
+
+Once a passkey has been registered, the sign-in page automatically tries it once on a subsequent signed-out visit. Canceling, choosing **USE PASSWORD**, or using an unsupported browser leaves password sign-in available. **SIGN IN WITH PASSKEY** retries manually. An explicit logout stays signed out until another visit or a manual sign-in.
+
+Adding or removing passkeys requires both a signed-in session and the current password. Registration requests a discoverable passkey and device verification; every sign-in verifies the challenge, signature, exact origin, relying-party ID, and user verification. Challenges expire after five minutes, can be used once, and are bound to the requesting browser. Synced passkeys with zero signature counters are supported.
+
+The SQLite database retains only public credential material and metadata; the private key stays with the authenticator. Include the database in backups to retain registered passkeys. Keep the configured hostname stable: passkeys created for another hostname must be registered again at the new address. The existing password remains the recovery method.
+
+## Approval Inbox
+
+Automatic submissions through `/api/ingest` enter **Inbox → Pending**. They appear in the Inbox badge and screening views while waiting for your decision. Library search, library statistics, saved query lists, and exports include approved papers only. Papers added by hand and the optional seed library are approved immediately.
+
+The Inbox shows why a paper fits, its relevance, role, assessment confidence, evidence level, source version, and important limitation before approval. Importer scores and discovery queries remain separate from source-grounded assessments. Older imports without an assessment say **Awaiting assessment**. Filter by topic, evidence, existing/new discoveries, or search. The example Uncertainty calibration topic includes screening criteria and explanation guidance in [topics/uncertainty-calibration-criteria.md](topics/uncertainty-calibration-criteria.md); each topic keeps its own editable criteria in **Topics**.
+
+Use **APPROVE FROM ABSTRACT**, **APPROVE & NEXT** after a completed full-text check, **DISMISS & NEXT**, or **LATER**. Later sets a paper aside for 24 hours, survives reloads, and remains accessible in the Later tab. Approval records the assessment displayed when you decided, admits the paper to the library, and queues its PDFs. It leaves the paper unread and does not accept proposed scores as your personal ratings. Dismissals are remembered by duplicate detection, so future submissions of the same paper do not refill the queue.
+
+**ASSESS ABSTRACT** records a topic-specific judgment without changing admission. High-relevance abstract assessments and explicit decision-relevant questions automatically prepare the linked PDF; **CHECK FULL TEXT** requests preparation for other candidates. This uses the existing bounded downloader and cache without admitting the paper to search, library statistics, or exports. Preparing a PDF is not a completed scientific assessment: the card shows **Full text ready to inspect** until you or the discovery agent records a check. **RECORD FULL-TEXT CHECK** opens extracted pages and requires sections inspected plus a supporting passage that occurs on its cited page. The original abstract explanation, earlier assessments, and source snapshots are preserved. Source or topic-criteria changes invalidate the current assessment rather than silently reusing it. Explicit arXiv revisions must match the linked PDF. Unspecified source versions remain visibly unspecified.
+
+No model service is bundled or implicitly called. Scientific explanations come from the owner or discovery agent through the structured interface described in [INGEST.md](INGEST.md). Agents can retrieve work and page text and append assessments; their token cannot make admission decisions. An unavailable PDF never blocks approval from the abstract, and a later assessment never silently reverses an approval.
+
+**UNDO LAST DECISION** reverses a decision unless the paper has since changed. **Dismissed** keeps rejected suggestions available for restoration; **Approved** shows the history of admitted discoveries. You can edit a pending paper's details without approving it. Keyboard shortcuts are `a` to approve, `d` to dismiss, `j`/`k` to move, and `u` to undo. The Inbox and badge refresh every minute while visible, and when you return to the app.
+
+Existing libraries retain their papers when the migration runs. To explicitly move unreviewed imports from one agent into the Inbox, using the server's environment configuration:
+
+```sh
+.venv/bin/python -m corpus.inbox --stage-agent corpus-arxiv-watch/1.0
+```
+
+The command preserves notes, scores, project assignments, and cached files. It pauses unfinished PDF downloads for those candidates and skips reviewed papers or papers with earlier Inbox decisions, so it is safe to repeat.
 
 ## API overview
 
 The browser uses these routes:
 
 - `GET /api/config`, `GET /api/session`, `POST /api/login`, and `POST /api/logout` handle configuration and the seven-day in-memory session cookie.
+- `GET /api/passkeys` lists registered keys; `POST /api/passkeys/register/options` and `/register/verify` register a key after password confirmation; `POST /api/passkeys/{id}/remove` removes one after password confirmation. `POST /api/passkeys/authenticate/options` and `/authenticate/verify` are the public passkey sign-in endpoints and issue the same session cookie as password login.
 - `GET /api/papers` searches the library; `GET /api/paper?id=...` returns detail, provenance, and PDF hits; `POST /api/papers` creates or updates a paper; `POST /api/duplicates` returns near-duplicate candidates.
+- `GET /api/inbox` lists discoveries by `status` (`pending`, `later`, `approved`, or `dismissed`), `field`, `q`, `evidence`, `origin`, and `sort` (`relevance`, `newest`, or `oldest`). `POST /api/inbox/decision` takes `{ "id": ..., "action": "approve" | "dismiss" | "restore" | "return" | "defer" | "resume", "expected_modified": ..., "assessment_id": ... }`; `POST /api/inbox/undo` takes `{ "decision_id": ... }`. All require an interactive session, and the ingest token cannot make approval decisions.
+- `POST /api/review/check` prepares a PDF before admission; `GET /api/review/text` reads one extracted page; `POST /api/review/assessments` appends a structured abstract or full-text assessment; `GET /api/review/work` returns candidates awaiting assessment or prepared checks, including checks that finish after early approval. The last three routes also accept the ingest token. Assessments are independent of library admission and personal scores.
 - `POST /api/metadata` fetches DOI or arXiv metadata; it accepts an identifier or source URL containing one of those identifiers.
+- `GET /api/catalog/search?q=...&source=library|crossref|arxiv&mode=all|title|author&offset=0` searches saved papers or a public catalog. `POST /api/catalog/resolve` accepts `{ "identifiers": [...] }` and returns per-link metadata or errors. `POST /api/capture` takes `{ "projects": [...], "papers": [...], "query": ... }` and adds or files up to 50 selected papers per request. These routes require a browser session; the ingest token cannot use manual capture.
+- `GET /api/topics` lists topics, research descriptions, and relevance criteria; `POST /api/topics` creates or updates `{ "id": ..., "label": ..., "description": ..., "relevance_criteria": ... }`. Both routes require a session. Descriptions and criteria are omitted from the public configuration response.
 - `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
 - `POST /api/sql` runs a bounded read-only query. SQLite is opened in read-only mode with `query_only`, an authorizer, a 150 ms progress timeout, and a 1,000-row cap. `CORPUS_SQL_LOCAL_ONLY=1` adds a loopback client check.
 - `POST /api/ingest` is the agent-facing endpoint and is authenticated with the Bearer token described in [INGEST.md](INGEST.md).

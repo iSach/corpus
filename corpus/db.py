@@ -77,7 +77,7 @@ def duplicate_candidates(db, paper, exclude=None, limit=5):
     words = list(dict.fromkeys(title.split()))
     # A broad FTS candidate pass avoids a linear fuzzy scan at library scale.
     words = [w for w in words if len(w)>3][:20] or words[:20]
-    matches = db.execute('SELECT p.id,p.title,p.authors FROM papers p JOIN paper_fts f ON f.paper_id=p.id WHERE paper_fts MATCH ? ORDER BY rank LIMIT 300',(' OR '.join(fts_literal(w) for w in words),)).fetchall()
+    matches = db.execute('SELECT p.id,p.title,p.authors,p.admission FROM papers p JOIN paper_fts f ON f.paper_id=p.id WHERE paper_fts MATCH ? ORDER BY rank LIMIT 300',(' OR '.join(fts_literal(w) for w in words),)).fetchall()
     candidates=[]
     for r in matches:
         if r['id']==exclude: continue
@@ -85,13 +85,13 @@ def duplicate_candidates(db, paper, exclude=None, limit=5):
         other_auth=normalized_text(' '.join(json.loads(r['authors'])))
         aus=SequenceMatcher(None,auth,other_auth).ratio() if auth and other_auth else ts
         similarity=round(ts*.85+aus*.15,4)
-        if similarity>=.4: candidates.append({'id':r['id'],'title':r['title'],'similarity':similarity})
+        if similarity>=.4: candidates.append({'id':r['id'],'title':r['title'],'admission':r['admission'],'similarity':similarity})
     return sorted(candidates,key=lambda c:c['similarity'],reverse=True)[:limit]
 
 def find_duplicate(db,paper,threshold,exclude=None):
     for key in ('doi','arxiv_id'):
         if paper.get(key):
-            r=db.execute(f'SELECT id,title FROM papers WHERE {key}=? AND id!=?',(paper[key],exclude or '')).fetchone()
+            r=db.execute(f'SELECT id,title,admission FROM papers WHERE {key}=? AND id!=?',(paper[key],exclude or '')).fetchone()
             if r: return {**dict(r),'similarity':1.,'reason':'Exact '+key+' match'}
     candidates=duplicate_candidates(db,paper,exclude)
     if candidates and candidates[0]['similarity']>=threshold:
@@ -120,10 +120,26 @@ def validate_paper(db, incoming, existing=None, ingest=False):
         elif p['doi']: p['canonical_url']='https://doi.org/'+p['doi']
     if p['year'] == '': p['year']=None
     if p['year'] is not None and (type(p['year']) is not int or not 1000 <= p['year'] <= 2200): raise ValueError('Year must be an integer between 1000 and 2200')
+    if 'projects' in incoming:
+        projects=incoming['projects']
+    elif 'field' in incoming:
+        projects=[p['field']] if p['field'] else []
+    else:
+        projects=base.get('projects',[p['field']] if p['field'] else [])
+    if not isinstance(projects,list) or len(projects)>100 or any(not isinstance(value,str) or not value for value in projects):
+        raise ValueError('projects must contain 1–100 topic IDs')
+    if 'projects' in incoming and not projects:
+        raise ValueError('Choose at least one project')
+    projects=list(dict.fromkeys(projects))
+    if projects and p['field'] not in projects:
+        p['field']=projects[0]
     if not p['field']:
         default=db.execute("SELECT id FROM fields ORDER BY (id='unfiled') DESC,rowid LIMIT 1").fetchone()
         p['field']=default[0]
     if not db.execute('SELECT 1 FROM fields WHERE id=?',(p['field'],)).fetchone(): raise ValueError('Unknown field: '+str(p['field']))
+    p['projects']=projects or [p['field']]
+    for project in p['projects']:
+        if not db.execute('SELECT 1 FROM fields WHERE id=?',(project,)).fetchone(): raise ValueError('Unknown project: '+project)
     p['state']='unreviewed' if ingest else p['state'] or 'unreviewed'
     if p['state'] not in ('unreviewed','reviewed','archived'): raise ValueError('Invalid review state')
     if p['starred'] not in (True,False,None,0,1): raise ValueError('starred must be boolean')
@@ -158,31 +174,38 @@ def validate_paper(db, incoming, existing=None, ingest=False):
 def add_run(db,agent,query='',proposed=1,extra=None):
     return db.execute('INSERT INTO ingest_run(agent,query,proposed,extra) VALUES(?,?,?,?)',(agent,query,proposed,json.dumps(extra or {},ensure_ascii=False))).lastrowid
 
-def write_paper(db,p,run_id=None,paper_id=None,query='',similarity=0):
+def write_paper(db,p,run_id=None,paper_id=None,query='',similarity=0,admission='approved'):
+    if admission not in ('pending','approved','dismissed'): raise ValueError('Invalid admission status')
     tags, artifacts=p['tags'],p['artifacts']
-    cols={k:v for k,v in p.items() if k not in ('tags','artifacts')}
+    cols={k:v for k,v in p.items() if k not in ('tags','artifacts','projects')}
     cols['authors']=json.dumps(cols['authors'],ensure_ascii=False)
     if paper_id:
+        admission=db.execute('SELECT admission FROM papers WHERE id=?',(paper_id,)).fetchone()[0]
         db.execute('UPDATE papers SET '+','.join(k+'=?' for k in cols)+",modified=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",[*cols.values(),paper_id])
     else:
         paper_id=p['arxiv_id'] or p['doi'] or str(uuid.uuid4())
         surname=normalized_text(p['authors'][0].split()[-1] if p['authors'] else 'anon').replace(' ','')
         bibkey=f"{surname}{p['year'] or 'nd'}_{hashlib.sha256(paper_id.encode()).hexdigest()[:10]}"
-        cols.update(id=paper_id,ingest_run_id=run_id,bibtex_key=bibkey)
+        cols.update(id=paper_id,ingest_run_id=run_id,bibtex_key=bibkey,admission=admission)
         db.execute('INSERT INTO papers('+','.join(cols)+') VALUES('+','.join('?' for _ in cols)+')',list(cols.values()))
-        db.execute('INSERT INTO provenance(paper_id,run_id,query,status,similarity,reason) VALUES(?,?,?,?,?,?)',(paper_id,run_id,query,'accepted',similarity,'No duplicate above threshold'))
+        db.execute('INSERT INTO provenance(paper_id,run_id,query,status,similarity,reason) VALUES(?,?,?,?,?,?)',(paper_id,run_id,query,'queued' if admission=='pending' else 'accepted',similarity,'Awaiting approval' if admission=='pending' else 'No duplicate above threshold'))
+    db.execute('DELETE FROM paper_projects WHERE paper_id=?',(paper_id,))
+    db.executemany('INSERT INTO paper_projects(paper_id,field_id) VALUES(?,?)',[(paper_id,project) for project in p.get('projects',[p['field']])])
     db.execute('DELETE FROM paper_tags WHERE paper_id=?',(paper_id,))
     for t in tags:
         db.execute('INSERT OR IGNORE INTO tags(name) VALUES(?)',(t,))
-        db.execute('INSERT INTO paper_tags SELECT ?,id FROM tags WHERE name=?',(paper_id,t))
+        db.execute('INSERT OR IGNORE INTO paper_tags SELECT ?,id FROM tags WHERE name=?',(paper_id,t))
     previous=db.execute('SELECT id,kind,url FROM artifacts WHERE paper_id=?',(paper_id,)).fetchall()
     wanted={(a['kind'],a['url']) for a in artifacts}
     for a in previous:
         if (a['kind'],a['url']) not in wanted: db.execute('DELETE FROM artifacts WHERE id=?',(a['id'],))
     for a in artifacts:
-        db.execute('INSERT OR IGNORE INTO artifacts(paper_id,kind,url,fetch_status) VALUES(?,?,?,?)',(paper_id,a['kind'],a['url'],'pending' if a['kind']=='pdf' else 'linked'))
+        db.execute('INSERT OR IGNORE INTO artifacts(paper_id,kind,url,fetch_status) VALUES(?,?,?,?)',(paper_id,a['kind'],a['url'],'pending' if a['kind']=='pdf' and admission=='approved' else 'linked'))
     db.execute('DELETE FROM paper_fts WHERE paper_id=?',(paper_id,))
     db.execute('INSERT INTO paper_fts(paper_id,title,authors,abstract,tags,notes) VALUES(?,?,?,?,?,?)',(paper_id,p['title'],' '.join(p['authors']),p['abstract'],' '.join(tags),p['notes']))
+    if admission == 'pending':
+        from .review import ensure_abstract
+        ensure_abstract(db,paper_id)
     return paper_id
 
 def paper_dict(row):
@@ -192,10 +215,15 @@ def get_paper(db, paper_id, q=''):
     r=db.execute('SELECT * FROM papers WHERE id=?',(paper_id,)).fetchone()
     if not r: return None
     p=paper_dict(r)
+    p['projects']=[row[0] for row in db.execute('SELECT field_id FROM paper_projects WHERE paper_id=? ORDER BY (field_id=?) DESC,field_id',(paper_id,p['field']))]
     p['notes_html']=MARKDOWN.render(p['notes'])
     p['tags']=[r[0] for r in db.execute('SELECT t.name FROM tags t JOIN paper_tags pt ON pt.tag_id=t.id WHERE pt.paper_id=? ORDER BY t.name',(paper_id,))]
     p['artifacts']=[dict(r) for r in db.execute('SELECT * FROM artifacts WHERE paper_id=? ORDER BY id',(paper_id,))]
     p['provenance']=[dict(r) for r in db.execute('SELECT pr.run_id,r.agent,pr.query,r.timestamp,pr.status,pr.similarity,pr.reason FROM provenance pr JOIN ingest_run r ON r.id=pr.run_id WHERE pr.paper_id=? ORDER BY pr.id DESC',(paper_id,))]
+    from .review import summary
+    p['review']=summary(db,paper_id)
+    decision=db.execute('SELECT * FROM inbox_decisions WHERE paper_id=? ORDER BY id DESC LIMIT 1',(paper_id,)).fetchone()
+    p['last_decision']=dict(decision) if decision else None
     terms=compile_query(q).pdf_terms
     p['pdf_hits']=[]
     if terms:
@@ -207,11 +235,13 @@ def get_paper(db, paper_id, q=''):
 
 def search(db,q='',facets=None,limit=100,offset=0):
     start=time.perf_counter(); c=compile_query(q,facets)
+    where="p.admission='approved' AND ("+c.where+')'
     # Evaluate the potentially broad FTS predicate once for all facet counts.
-    count_sql = 'WITH matched AS MATERIALIZED (SELECT p.id,p.field,p.state,p.venue_class,p.year FROM papers p WHERE '+c.where+') '
-    pieces=["SELECT 'total' facet,'' value,count(*) count FROM matched", "SELECT 'library_total','',count(*) FROM papers"]
-    for key in ('field','state','venue_class','year'):
+    count_sql = 'WITH matched AS MATERIALIZED (SELECT p.id,p.field,p.state,p.venue_class,p.year FROM papers p WHERE '+where+') '
+    pieces=["SELECT 'total' facet,'' value,count(*) count FROM matched", "SELECT 'library_total','',count(*) FROM papers WHERE admission='approved'"]
+    for key in ('state','venue_class','year'):
         pieces.append(f"SELECT '{key}',cast({key} AS TEXT),count(*) FROM matched WHERE {key} IS NOT NULL GROUP BY {key}")
+    pieces.append("SELECT 'field',pp.field_id,count(*) FROM matched m JOIN paper_projects pp ON pp.paper_id=m.id GROUP BY pp.field_id")
     pieces.append("SELECT 'has',a.kind,count(DISTINCT m.id) FROM matched m JOIN artifacts a ON a.paper_id=m.id GROUP BY a.kind")
     pieces.append("SELECT 'has','cached',count(*) FROM matched m WHERE EXISTS (SELECT 1 FROM artifacts a WHERE a.paper_id=m.id AND a.kind='pdf' AND a.fetch_status='cached')")
     count_rows=db.execute(count_sql+' UNION ALL '.join(pieces),c.params).fetchall()
@@ -222,11 +252,13 @@ def search(db,q='',facets=None,limit=100,offset=0):
         elif r['facet']=='library_total': library_total=r['count']
         else: counts[r['facet']].append({'value':r['value'],'count':r['count']})
     summary_columns='id,title,authors,venue,venue_class,year,canonical_url,arxiv_id,doi,added,modified,state,field,starred,rel,cred,qual,reimpl,proposed_rel,proposed_cred,proposed_qual,proposed_reimpl,bibtex_key'
-    rows=db.execute('SELECT '+','.join('p.'+k for k in summary_columns.split(','))+' FROM papers p WHERE '+c.where+' ORDER BY '+c.order+' LIMIT ? OFFSET ?',c.params+[limit,offset]).fetchall()
+    rows=db.execute('SELECT '+','.join('p.'+k for k in summary_columns.split(','))+' FROM papers p WHERE '+where+' ORDER BY '+c.order+' LIMIT ? OFFSET ?',c.params+[limit,offset]).fetchall()
     papers=[paper_dict(r) for r in rows]
     if papers:
         by_id={p['id']:p for p in papers}
-        for p in papers: p['artifacts']=[]
+        for p in papers: p['artifacts']=[]; p['projects']=[]
+        for row in db.execute('SELECT paper_id,field_id FROM paper_projects WHERE paper_id IN ('+','.join('?' for _ in papers)+') ORDER BY field_id',list(by_id)):
+            by_id[row['paper_id']]['projects'].append(row['field_id'])
         for a in db.execute('SELECT * FROM artifacts WHERE paper_id IN ('+','.join('?' for _ in papers)+')',list(by_id)):
             by_id[a['paper_id']]['artifacts'].append(dict(a))
     return {'papers':papers,'total':total,'library_total':library_total,'facets':counts,'sort':c.sort,'elapsed_ms':round((time.perf_counter()-start)*1000,2)}

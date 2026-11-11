@@ -132,6 +132,25 @@ def test_create_edit_persists_normalized_values_and_manual_scores(app_client):
     assert paper["proposed_reason"] == "Updated draft"
 
 
+def test_case_variant_tags_save_edit_ingest_and_remain_searchable(app_client):
+    client, settings = app_client
+    created = client.post('/api/papers', json=_paper('tag-cases', tags=['ML', 'ml', ' ML ', 'physics']))
+    assert created.status_code == 200, created.text
+    paper = created.json()['paper']
+    assert set(paper['tags']) == {'ML', 'physics'}
+    edited = client.post('/api/papers', json={'id':paper['id'], 'tags':['ml', 'ML', 'physics', 'PHYSICS']})
+    assert edited.status_code == 200, edited.text
+    assert set(edited.json()['paper']['tags']) == {'ML', 'physics'}
+    assert client.get('/api/papers', params={'q':'tag:ml'}).json()['total'] == 1
+    batch = client.post('/api/ingest', headers={'Authorization':'Bearer '+settings.ingest_token}, json={
+        'papers':[_paper('other-tag-cases', title='Pattern formation in rotating fluids', tags=['ml','ML'])],
+    })
+    assert batch.status_code == 200, batch.text
+    assert batch.json()['accepted'] == 1 and batch.json()['rejected'] == 0
+    with connection(settings, True) as db:
+        assert db.execute('SELECT count(*) FROM tags WHERE name=?', ('ml',)).fetchone()[0] == 1
+
+
 def test_ingest_token_batch_accepts_duplicates_and_rejects_malformed_items(app_client):
     client, _ = app_client
     existing = client.post("/api/papers", json=_paper("already-there", rel=4)).json()["paper"]
@@ -366,15 +385,16 @@ def test_stats_endpoint_returns_aggregates_and_ingest_volume(app_client):
     response = client.get("/api/stats")
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["total"] == 2
-    assert data["states"]["unreviewed"] == 1
+    assert data["total"] == 1
+    assert data["states"]["unreviewed"] == 0
     assert data["states"]["reviewed"] == 1
     assert data["accepted"] == 2
     assert data["proposed"] == 2
     assert data["keep_rate"] == 100.0
     by_field = {row["field"]: row["count"] for row in data["fields"]}
     assert by_field["sbi-pretrain"] == 1
-    assert by_field["diff-compose"] == 1
+    assert by_field["diff-compose"] == 0
+    assert data['inbox']['pending'] == 1
     assert len(data["distributions"]["rel"]["bins"]) == 11
     assert data["distributions"]["rel"]["bins"][9] == 1
     assert data["distributions"]["rel"]["mean"] == 9.0

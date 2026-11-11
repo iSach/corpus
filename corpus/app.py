@@ -12,6 +12,11 @@ from .exporting import export_papers
 from .stats import stats
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
+from .topics import list_topics, save_topic
+from .passkeys import Passkeys, install_routes as install_passkey_routes
+from .inbox import install_routes as install_inbox_routes
+from .review import install_routes as install_review_routes, prepare_pending, save_assessment
+from .capture import install_routes as install_capture_routes
 
 log=logging.getLogger('corpus')
 
@@ -56,9 +61,12 @@ class Limiter:
 def create_app(settings=None):
     settings=settings or Settings()
     sessions={}; limits=Limiter()
+    passkeys=Passkeys(settings)
     @asynccontextmanager
     async def lifespan(app):
         initialize(settings); setup_auth(settings)
+        with connection(settings) as db: prepare_pending(db)
+        passkeys.initialize()
         stop=asyncio.Event()
         task=asyncio.create_task(worker(settings,stop)) if settings.pdf_jobs else None
         yield
@@ -66,6 +74,7 @@ def create_app(settings=None):
         if task: await task
     app=FastAPI(title='Corpus',docs_url=None,redoc_url=None,openapi_url=None,lifespan=lifespan)
     app.state.settings=settings
+    app.state.passkeys=passkeys
     def authenticated(request):
         if settings.dev: return True
         token=request.cookies.get('corpus_session','')
@@ -89,13 +98,14 @@ def create_app(settings=None):
                 if size>2_000_000: return JSONResponse({'detail':'Request exceeds 2 MB'},status_code=413)
                 chunks.append(chunk)
             request._body=b''.join(chunks)
-        public=path in ('/api/session','/api/login','/api/config')
-        if path=='/api/ingest':
+        public=path in ('/api/session','/api/login','/api/config','/api/passkeys/authenticate/options','/api/passkeys/authenticate/verify')
+        agent_route = path=='/api/ingest' or (path in ('/api/review/work','/api/review/text','/api/review/assessments') and bool(request.headers.get('authorization')))
+        if agent_route:
             supplied=request.headers.get('authorization','')
             if not hmac.compare_digest(supplied,'Bearer '+settings.ingest_token): return JSONResponse({'detail':'A valid ingest Bearer token is required'},status_code=401)
         elif path.startswith('/api/') and not public and not authenticated(request):
             return JSONResponse({'detail':'Sign in to Corpus'},status_code=401)
-        if request.method not in ('GET','HEAD','OPTIONS') and path!='/api/ingest':
+        if request.method not in ('GET','HEAD','OPTIONS') and not agent_route:
             origin=request.headers.get('origin')
             if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'):
                 return JSONResponse({'detail':'Cross-origin writes are not allowed'},status_code=403)
@@ -112,19 +122,24 @@ def create_app(settings=None):
     @app.exception_handler(sqlite3.Error)
     async def database_error(request,e): return JSONResponse({'detail':str(e)},status_code=400)
     @app.get('/api/config')
-    def config():
-        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT * FROM fields ORDER BY rowid')]
-        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only}
+    def config(request:Request):
+        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label FROM fields ORDER BY rowid')]
+        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request)}
+    @app.get('/api/topics')
+    def topics():
+        with connection(settings,True) as db: return {'topics':list_topics(db)}
+    @app.post('/api/topics')
+    def update_topic(body:dict):
+        with connection(settings) as db: return {'topic':save_topic(db,body)}
     @app.get('/api/session')
     def session(request:Request): return {'authenticated':authenticated(request)}
-    @app.post('/api/login')
-    def login(request:Request,body:dict):
+    def check_password(request,password):
         ip=request.client.host if request.client else 'unknown'
         if not limits.allow('login:'+ip,10,300): raise HTTPException(429,'Too many login attempts; try again in five minutes')
-        password=body.get('password','')
         if not isinstance(password,str) or len(password)>1000: raise HTTPException(400,'Invalid password')
         with connection(settings,True) as db: r=db.execute('SELECT * FROM credential WHERE id=1').fetchone()
         if not hmac.compare_digest(hash_password(password,r['salt']),r['password_hash']): raise HTTPException(401,'Incorrect password')
+    def issue_session():
         token=secrets.token_urlsafe(32)
         for k in list(sessions):
             if sessions[k]<time.time(): del sessions[k]
@@ -132,6 +147,14 @@ def create_app(settings=None):
         response=JSONResponse({'authenticated':True})
         response.set_cookie('corpus_session',token,httponly=True,secure=settings.secure_cookie,samesite='strict',max_age=86400*7)
         return response
+    @app.post('/api/login')
+    def login(request:Request,body:dict):
+        check_password(request,body.get('password',''))
+        return issue_session()
+    install_passkey_routes(app,passkeys,limits,check_password,issue_session)
+    install_inbox_routes(app,settings)
+    install_review_routes(app,settings)
+    install_capture_routes(app,settings,limits)
     @app.post('/api/logout')
     def logout(request:Request):
         sessions.pop(request.cookies.get('corpus_session',''),None)
@@ -194,19 +217,23 @@ def create_app(settings=None):
                     if dup:
                         db.execute('INSERT INTO provenance(paper_id,run_id,query,status,similarity,reason) VALUES(?,?,?,?,?,?)',(dup['id'],run,item_query,'duplicate',dup['similarity'],dup['reason']))
                         counts['duplicate']+=1
-                        results.append({'index':i,'status':'duplicate','id':dup['id'],'reason':dup['reason'],'similarity':dup['similarity']})
+                        results.append({'index':i,'status':'duplicate','id':dup['id'],'admission':dup['admission'],'reason':dup['reason'],'similarity':dup['similarity']})
                     else:
                         near=duplicate_candidates(db,p)
                         similarity=near[0]['similarity'] if near else 0
-                        pid=write_paper(db,p,run,query=item_query,similarity=similarity)
-                        counts['accepted']+=1; results.append({'index':i,'status':'accept','id':pid,'reason':'Added as unreviewed; PDF queued'})
+                        pid=write_paper(db,p,run,query=item_query,similarity=similarity,admission='pending')
+                        if 'assessment' in item:
+                            if not isinstance(item['assessment'],dict) or item['assessment'].get('stage','abstract')!='abstract':
+                                raise ValueError('Ingest assessments must be abstract-only; prepare and inspect the PDF for a full-text check')
+                            save_assessment(db,pid,item['assessment'],'agent:'+agent)
+                        counts['accepted']+=1; results.append({'index':i,'status':'accept','id':pid,'admission':'pending','reason':'Queued in Inbox for approval'})
                     db.execute('RELEASE ingest_item')
-                except (ValueError,sqlite3.IntegrityError,QueryError) as e:
+                except (ValueError,sqlite3.IntegrityError,QueryError,HTTPException) as e:
                     db.execute('ROLLBACK TO ingest_item'); db.execute('RELEASE ingest_item')
-                    counts['rejected']+=1; results.append({'index':i,'status':'reject','reason':str(e)})
+                    counts['rejected']+=1; results.append({'index':i,'status':'reject','reason':str(e.detail) if isinstance(e,HTTPException) else str(e)})
             extra=body.get('extra',{})
             db.execute('UPDATE ingest_run SET accepted=?,duplicate=?,rejected=?,extra=? WHERE id=?',(counts['accepted'],counts['duplicate'],counts['rejected'],json.dumps({'agent_metadata':extra,'results':results},ensure_ascii=False),run))
-            return {'run_id':run,'results':results,**counts}
+            return {'run_id':run,'results':results,'queued':counts['accepted'],**counts}
     @app.post('/api/sql')
     def sql(request:Request,body:dict):
         if settings.sql_local_only and (not request.client or request.client.host not in ('127.0.0.1','::1','testclient')): raise HTTPException(403,'SQL is restricted to localhost')
@@ -240,6 +267,8 @@ def create_app(settings=None):
     @app.post('/api/artifacts/{id}/retry')
     def retry(id:int):
         with connection(settings) as db:
+            paper=db.execute('SELECT p.admission FROM papers p JOIN artifacts a ON a.paper_id=p.id WHERE a.id=?',(id,)).fetchone()
+            if paper and paper['admission']!='approved': raise HTTPException(409,'Approve this paper in the Inbox before downloading PDFs')
             changed=db.execute("UPDATE artifacts SET fetch_status='pending',error=NULL WHERE id=? AND kind='pdf' AND fetch_status IN ('failed','linked')",(id,)).rowcount
         return {'queued':bool(changed)}
     @app.get('/api/artifacts/{id}/file')
