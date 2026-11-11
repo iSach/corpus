@@ -1,0 +1,18 @@
+[Unit]
+Description=Corpus database backup
+
+[Service]
+Type=oneshot
+User=corpus
+Group=corpus
+UMask=0077
+WorkingDirectory=/opt/corpus
+ExecStart=/opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus --keep 14
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectHome=true
+ProtectSystem=strict
+# The data directory must be writable: reading a WAL database creates -wal/-shm files.
+ReadWritePaths=/var/lib/corpus/data /var/backups/corpus

@@ -211,19 +211,61 @@ Copy `docs/nginx.conf` into the nginx site configuration, replace `literature.ex
 
 ## Backup and restore
 
-Stop Corpus before copying the SQLite database and PDF cache together. This avoids coordinating a live WAL database with files whose extraction status is changing:
+### Nightly database backups
+
+`scripts/backup_db.py` copies the database with SQLite's online backup API, so the copy is consistent while Corpus keeps running. Each run writes `corpus-YYYYMMDDTHHMMSSZ.sqlite3` (UTC) through a temporary file, runs `PRAGMA integrity_check` on the copy, renames it into place, then deletes all but the newest `--keep` snapshots (default 14). If the check fails, the run exits non-zero, removes the partial copy and prunes nothing. Other files in the backup directory are never touched.
+
+The PDF cache is not included. Extracted PDF text is stored in the database, so search keeps working after a restore; the PDF files can be fetched again from their source links, or kept with the full backup below.
+
+Install the templates, after adjusting paths and `--keep` in the service file if your layout differs:
+
+```sh
+sudo install -d -o corpus -g corpus -m 0750 /var/backups/corpus
+sudo install -o root -g root -m 0644 docs/corpus-backup.service docs/corpus-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now corpus-backup.timer
+sudo systemctl start corpus-backup.service
+systemctl list-timers corpus-backup.timer
+journalctl -u corpus-backup -n 5
+```
+
+The timer runs at 03:15 server time with up to 15 minutes of random delay; `Persistent=true` catches up on a run missed while the machine was off. A failed run shows in `systemctl status corpus-backup` and the journal. Run the script only as `corpus`: reading a WAL database creates `-wal` and `-shm` files owned by the reader, and root-owned ones would stop the server from writing, so the script refuses to run as anyone but the database owner. Backups on the same disk do not survive losing that disk; copy `/var/backups/corpus` to another machine as well.
+
+Check a backup without changing it:
+
+```sh
+sudo -u corpus /opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --verify /var/backups/corpus/corpus-20260101T031500Z.sqlite3
+```
+
+### Restore a nightly backup
+
+Stop Corpus, snapshot the current state so the restore can be undone, clear the old WAL files, then put the chosen backup in place:
 
 ```sh
 sudo systemctl stop corpus
-sudo install -d -m 700 /var/backups/corpus
-sudo sqlite3 /var/lib/corpus/data/corpus.sqlite3 ".backup '/var/backups/corpus/corpus.sqlite3'"
-sudo tar -C /var/lib/corpus/data -czf /var/backups/corpus/pdfs.tgz pdfs
-sudo cp -a /var/lib/corpus/data/ingest-token /var/backups/corpus/ingest-token
+sudo -u corpus /opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/pre-restore
+sudo rm -f /var/lib/corpus/data/corpus.sqlite3-wal /var/lib/corpus/data/corpus.sqlite3-shm
+sudo install -o corpus -g corpus -m 0640 /var/backups/corpus/corpus-20260101T031500Z.sqlite3 /var/lib/corpus/data/corpus.sqlite3
 sudo systemctl start corpus
 ```
 
-The SQLite backup can also be made with Python's `Connection.backup()` API. Keep the database backup and matching PDF cache archive from the same stopped-server window. Protect both backups because the token file authorizes agent writes.
+Delete the `-wal` and `-shm` files only after the snapshot: they can hold the stopped server's last writes, and SQLite would apply a leftover WAL file to the restored database.
+
+### Full offline backup
+
+To keep the PDF cache as well, stop Corpus and copy the database and PDF cache together. This avoids coordinating a live WAL database with files whose extraction status is changing:
+
+```sh
+sudo systemctl stop corpus
+sudo install -d -m 700 /var/backups/corpus-full
+sudo sqlite3 /var/lib/corpus/data/corpus.sqlite3 ".backup '/var/backups/corpus-full/corpus.sqlite3'"
+sudo tar -C /var/lib/corpus/data -czf /var/backups/corpus-full/pdfs.tgz pdfs
+sudo cp -a /var/lib/corpus/data/ingest-token /var/backups/corpus-full/ingest-token
+sudo systemctl start corpus
+```
+
+Without the `sqlite3` command-line tool, make the database copy with `scripts/backup_db.py` run as `corpus`, as above. Keep the database backup and matching PDF cache archive from the same stopped-server window. Protect both backups because the token file authorizes agent writes.
 
 The `sqlite3`, `tar`, and `cp` commands above copy files without printing database or token contents. If `CORPUS_PASSWORD` or `CORPUS_INGEST_TOKEN` lives in `/etc/corpus/corpus.env`, preserve that file through a protected secret-backup mechanism rather than echoing its values; retain restrictive file permissions.
 
-To restore, stop the service, replace `corpus.sqlite3` and the `pdfs` directory from the matching backup, restore the token if agent continuity matters, fix ownership to `corpus:corpus`, and start the service. Do not restore while the process is running; remove stale `corpus.sqlite3-wal` and `corpus.sqlite3-shm` files only after confirming they are from the old stopped instance.
+To restore a full backup, stop the service, replace `corpus.sqlite3` and the `pdfs` directory from the matching backup, restore the token if agent continuity matters, fix ownership to `corpus:corpus`, and start the service. Do not restore while the process is running; remove stale `corpus.sqlite3-wal` and `corpus.sqlite3-shm` files only after confirming they are from the old stopped instance.
