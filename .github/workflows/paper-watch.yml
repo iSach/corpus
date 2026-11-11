@@ -19,7 +19,9 @@ jobs:
     env:
       CORPUS_INGEST_URL: ${{ vars.CORPUS_INGEST_URL }}
       CORPUS_INGEST_TOKEN: ${{ secrets.CORPUS_INGEST_TOKEN }}
-      CORPUS_TOPICS: ${{ vars.CORPUS_TOPICS }}
+      # A secret, not a variable: GitHub prints job environment values in the
+      # run log, which anyone can read on a public repository. Secrets show as ***.
+      CORPUS_TOPICS: ${{ secrets.CORPUS_TOPICS }}
       CORPUS_WATCH_STATE: .automation/arxiv-watch.json
     steps:
       - uses: actions/checkout@v4
