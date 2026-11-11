@@ -30,7 +30,10 @@ def connection(settings, readonly=False):
 def initialize(settings):
     settings.data_dir.mkdir(parents=True,exist_ok=True)
     settings.cache_dir.mkdir(parents=True,exist_ok=True)
+    from .review import input_hash
     with connection(settings) as db:
+        # Lets a migration recompute assessment digests inside its own transaction.
+        db.create_function('assessment_input_hash',1,lambda snapshot: input_hash(json.loads(snapshot)),deterministic=True)
         db.execute('PRAGMA journal_mode=WAL')
         db.execute('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
         applied={r[0] for r in db.execute('SELECT version FROM schema_migrations')}

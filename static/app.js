@@ -396,6 +396,7 @@
     try {
       await api('/api/topics', { method: 'POST', body: { id: topic.id, label: topic.label, description: topic.description, relevance_criteria: topic.relevance_criteria || '' } });
       state.topicForm = null;
+      state.inbox.detail = null; // The open Inbox card shows this topic's brief; reload it on return.
       await loadTopics();
       toast('Topic saved');
     } catch (error) { state.topicsError = getError(error); }
@@ -1321,7 +1322,7 @@
       decision && decision.after_admission === 'approved' && decision.assessment_id && assessment && decision.assessment_id !== assessment.id ? h('p', { class: 'review-limitation' }, 'The assessment has changed since your approval. Your library decision is unchanged.') : null,
       comparison,
       history.length ? h('details', { class: 'review-history', 'data-disclosure-key': `history:${paper.id}` }, h('summary', null, `Assessment history (${history.length})`), ...history.map(entry => h('div', { class: 'review-history-entry' }, h('strong', null, `${fieldLabel(entry.field)} · ${entry.stage === 'abstract' ? 'Abstract' : 'Full text'} · ${formatDate(entry.created)}`), h('p', null, entry.explanation)))) : null,
-      h('details', { class: 'review-criteria', 'data-disclosure-key': `criteria:${paper.id}` }, h('summary', null, 'Topic criteria'), h('p', { class: 'review-criteria-text' }, assessment ? assessment.snapshot.topic.relevance_criteria || assessment.snapshot.topic.description || 'No criteria supplied. Add them in Topics.' : 'Open Topics to inspect or update the relevance criteria.')),
+      h('details', { class: 'review-criteria', 'data-disclosure-key': `criteria:${paper.id}` }, h('summary', null, 'Topic criteria'), h('p', { class: 'review-criteria-text' }, review.topic ? review.topic.relevance_criteria || review.topic.description || 'No criteria supplied. Add them in Topics.' : 'Open Topics to inspect or update the relevance criteria.')),
       paper.admission !== 'dismissed' ? h('div', { class: 'detail-actions' },
         h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: () => startAssessment('abstract') }, 'ASSESS ABSTRACT'),
         check && ['ready','checked'].includes(check.status) ? h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: () => startAssessment('full_text') }, 'RECORD FULL-TEXT CHECK') : h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy || (check && ['queued','preparing'].includes(check.status)), onclick: prepareFullText }, check && check.status === 'unavailable' ? 'RETRY FULL TEXT' : 'CHECK FULL TEXT')) : null,

@@ -102,7 +102,7 @@ Use a versioned canonical URL and PDF URL when a revision is known. An explicit 
 
 The following routes accept the same Bearer token as ingestion, or the owner's browser session:
 
-1. `GET /api/review/work?limit=10` returns up to 50 work items with current/abstract assessments and topic briefs/criteria in `review.current.snapshot.topic`. Save the current assessment ID. The queue includes unassessed pending papers and ready checks, including checks completed after the owner approved early.
+1. `GET /api/review/work?limit=10` returns up to 50 work items with current/abstract assessments and the topic's current brief and criteria in `review.topic`. `review.current.snapshot.topic` records the topic as that assessment saw it; its name and description may have been edited since, but its criteria always match. Save the current assessment ID. The queue includes unassessed pending papers and ready checks, including checks completed after the owner approved early.
 2. `GET /api/review/text?id=PAPER_ID&page=1` reads an extracted PDF page once preparation is ready. It returns `page`, `pages`, `text`, `artifact_id`, and `abstract_id`. Read the sections needed to resolve the recorded questions; a downloaded PDF alone is not evidence of a completed check.
 3. `POST /api/review/assessments` appends an assessment. Supply `id`, the fields above, and `expected_assessment_id` from the work item. Stale assessments return HTTP 409. New abstract assessments contain neither `sections` nor page evidence.
 

@@ -1,4 +1,5 @@
 """Evidence boundaries, review preparation, and decisions across the real API."""
+import hashlib
 import json
 
 import pytest
@@ -6,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from corpus.app import create_app
 from corpus.config import Settings
-from corpus.db import connection
+from corpus.db import connection, initialize
 from corpus import jobs, sources
 from test_api import _pdf_fixture
 from test_inbox import library, proposal, ingest, decision, TOKEN
@@ -204,11 +205,11 @@ def test_agent_can_supply_evidence_but_cannot_decide(tmp_path):
         assert client.get('/api/review/work',headers={'Authorization':'Bearer wrong'}).status_code==401
 
 
-def test_topic_change_preserves_but_invalidates_old_assessments(library):
+def test_criteria_change_preserves_but_invalidates_old_assessments(library):
     client,_=library
     pid=ingest(client,proposal(assessment=assessment(priority='medium')))['results'][0]['id']
     old=paper(client,pid)['review']['current']
-    response=client.post('/api/topics',json={'id':'physics','label':'Physics','description':'Updated research scope','relevance_criteria':'Require dynamics evidence.'})
+    response=client.post('/api/topics',json={'id':'physics','label':'Physics','relevance_criteria':'Require dynamics evidence.'})
     assert response.status_code==200
     new=paper(client,pid)['review']
     assert new['current']['assessor']=='not-assessed'
@@ -228,6 +229,42 @@ def test_undo_back_to_pending_resumes_unfinished_full_text_preparation(library,a
     assert restored['admission']=='pending' and restored['review']['check']['status']=='queued'
     artifact=jobs.next_artifact(settings)
     assert artifact and artifact['paper_id']==pid
+
+
+def test_topic_name_and_description_edits_keep_assessments_current(library):
+    client,_=library
+    pid=ingest(client,proposal(assessment=assessment(priority='medium')))['results'][0]['id']
+    before=paper(client,pid)
+    shown=before['review']['current']
+    response=client.post('/api/topics',json={'id':'physics','label':'Physical systems','description':'A rewritten summary of the same scope.'})
+    assert response.status_code==200, response.text
+    review=paper(client,pid)['review']
+    assert review['current']['id']==shown['id']
+    assert len(review['history'])==len(before['review']['history'])
+    assert review['topic']=={'id':'physics','label':'Physical systems','description':'A rewritten summary of the same scope.','relevance_criteria':''}
+    listed=client.get('/api/inbox').json()['papers']
+    assert [(row['id'],row['priority'],row['assessor']) for row in listed]==[(pid,'medium',shown['assessor'])]
+    assert decision(client,pid,'approve',assessment_id=shown['id'],expected_modified=before['modified']).status_code==200
+
+
+def test_upgrade_rehashes_stored_assessments_and_keeps_decision_references(library):
+    client,settings=library
+    pid=ingest(client,proposal(assessment=assessment(priority='medium')))['results'][0]['id']
+    shown=paper(client,pid)['review']['current']['id']
+    assert decision(client,pid,'defer',assessment_id=shown).status_code==200
+    with connection(settings) as db:
+        # Before migration 8 the digest covered the whole snapshot, topic description included.
+        for row in db.execute('SELECT id,snapshot FROM review_assessments').fetchall():
+            legacy=hashlib.sha256(json.dumps(json.loads(row['snapshot']),sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            db.execute('UPDATE review_assessments SET input_hash=? WHERE id=?',(legacy,row['id']))
+        db.execute("UPDATE fields SET description='Edited before the upgrade' WHERE id='physics'")
+        db.execute('DELETE FROM schema_migrations WHERE version=8')
+    assert paper(client,pid)['review']['current'] is None
+    initialize(settings)
+    assert paper(client,pid)['review']['current']['id']==shown
+    assert paper(client,pid)['last_decision']['assessment_id']==shown
+    assert decision(client,pid,'resume').status_code==200
+    assert decision(client,pid,'approve',assessment_id=shown).status_code==200
 
 
 def test_dismissing_cancels_pending_review_download(library,monkeypatch):

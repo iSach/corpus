@@ -16,18 +16,29 @@ ROLES = ('model', 'evaluation', 'supporting', 'adjacent', 'unknown')
 CONFIDENCES = ('high', 'moderate', 'low', 'unknown')
 
 
+def input_hash(snapshot):
+    """Digest of what an assessment is judged against: the paper source and the
+    topic's relevance criteria. The snapshot also records the topic name and
+    description, which can be edited without invalidating assessments."""
+    judged = {key:snapshot[key] for key in ('title', 'abstract', 'source_url', 'pdfs')}
+    judged['topic'] = {key:snapshot['topic'][key] for key in ('id', 'relevance_criteria')}
+    return hashlib.sha256(json.dumps(judged, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def topic(db, field):
+    return dict(db.execute('SELECT id,label,description,relevance_criteria FROM fields WHERE id=?', (field,)).fetchone())
+
+
 def subject(db, paper_id):
     if not isinstance(paper_id, str):
         raise ValueError('Choose a paper')
     paper = db.execute('SELECT * FROM papers WHERE id=?', (paper_id,)).fetchone()
     if not paper:
         raise HTTPException(404, 'Paper not found')
-    topic = dict(db.execute('SELECT * FROM fields WHERE id=?', (paper['field'],)).fetchone())
     pdfs = [dict(r) for r in db.execute("SELECT id,url FROM artifacts WHERE paper_id=? AND kind='pdf' ORDER BY id", (paper_id,))]
     snapshot = {'title':paper['title'], 'abstract':paper['abstract'], 'source_url':paper['canonical_url'],
-                'pdfs':pdfs, 'topic':topic}
-    digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    return dict(paper), snapshot, digest, pdfs
+                'pdfs':pdfs, 'topic':topic(db, paper['field'])}
+    return dict(paper), snapshot, input_hash(snapshot), pdfs
 
 
 def decode(row):
@@ -70,11 +81,13 @@ def summary(db, paper_id):
     history = [decode(row) for row in db.execute('SELECT * FROM review_assessments WHERE paper_id=? ORDER BY id DESC', (paper_id,))]
     for entry in history:
         entry.pop('snapshot', None)
+    # The live topic brief: a snapshot keeps the name and description its assessment saw.
+    live = topic(db, db.execute('SELECT field FROM papers WHERE id=?', (paper_id,)).fetchone()[0])
     if not assessment:
-        return {'current':None, 'abstract':None, 'check':None, 'history':history}
+        return {'current':None, 'abstract':None, 'check':None, 'history':history, 'topic':live}
     abstract = assessment if assessment['stage']=='abstract' else decode(db.execute('SELECT * FROM review_assessments WHERE id=?', (assessment['compared_to'],)).fetchone())
     check = db.execute('SELECT * FROM full_text_checks WHERE abstract_id=?', (abstract['id'],)).fetchone()
-    return {'current':assessment, 'abstract':abstract, 'check':dict(check) if check else None, 'history':history}
+    return {'current':assessment, 'abstract':abstract, 'check':dict(check) if check else None, 'history':history, 'topic':live}
 
 
 def request_check(db, paper_id, reason='Requested by you'):
