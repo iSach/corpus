@@ -48,6 +48,8 @@ The query is passed to the [arXiv API](https://info.arxiv.org/help/api/user-manu
 
 The watcher queries topics sequentially with a three-second pause, normalizes title, authors, abstract, date, DOI, arXiv ID, and PDF URL, then sends at most 100 papers per ingest request. New papers enter Corpus as **unreviewed**, with a source-provided `arXiv` venue and topic tags. It does not assign personal scores.
 
+arXiv's API is occasionally slow or briefly unavailable. When a search times out, the connection drops, or arXiv answers with HTTP 429 or a 5xx error, the watcher waits 5, 15, then 45 seconds between up to three retries and notes each one in the log. Any other HTTP error, such as a malformed query, fails at once. If a search still fails, the run stops before sending anything to Corpus and keeps the previous state, so the next run picks up the same papers.
+
 A small GitHub Actions cache remembers the arXiv IDs already sent for each topic. If that cache is evicted, Corpus is still the final safety net: it deduplicates exact arXiv and DOI matches before it creates papers. The process imports new records; it intentionally does not overwrite metadata when arXiv publishes a later version of an existing paper.
 
 The workflow summary shows accepted, duplicate, and rejected counts in its `Discover and import` log. Accepted matches wait in **Inbox → Pending** until you approve or dismiss them; the **Stats** screen shows the associated ingest run and provenance.

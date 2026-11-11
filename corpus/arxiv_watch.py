@@ -7,6 +7,7 @@ sent only to Corpus's dedicated Bearer-authenticated ingest endpoint.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -25,6 +26,9 @@ ATOM = "{http://www.w3.org/2005/Atom}"
 ARXIV = "{http://arxiv.org/schemas/atom}"
 MAX_TOPICS = 20
 STATE_LIMIT = 1_000
+# Seconds to wait before each retry of a transient arXiv failure; one initial
+# attempt plus one retry per delay bounds a topic to four requests.
+ARXIV_RETRY_DELAYS = (5.0, 15.0, 45.0)
 
 
 class WatchError(ValueError):
@@ -126,14 +130,49 @@ def arxiv_url(query: str, maximum: int) -> str:
     )
 
 
-def fetch_arxiv(query: str, maximum: int, *, opener: Callable[..., Any] = urllib.request.urlopen) -> list[dict[str, Any]]:
-    """Return normalized public arXiv Atom entries for one search query."""
+def _transient(exc: Exception) -> bool:
+    """Whether a failed arXiv request is worth repeating."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    return True  # Timeouts, refused or reset connections, and truncated responses.
+
+
+def _failure_reason(exc: Exception) -> str:
+    # Name the failure without echoing the request URL, which contains the query.
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException):
+        return type(exc.reason).__name__
+    return type(exc).__name__
+
+
+def _read_arxiv(request: urllib.request.Request, opener: Callable[..., Any], sleep: Callable[[float], None]) -> bytes:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            with opener(request, timeout=30) as response:
+                return response.read(4 * 1024 * 1024 + 1)
+        except (OSError, http.client.HTTPException) as exc:
+            reason = _failure_reason(exc)
+            if attempt > len(ARXIV_RETRY_DELAYS) or not _transient(exc):
+                attempts = f"{attempt} attempts" if attempt > 1 else "1 attempt"
+                raise WatchError(f"arXiv search request failed after {attempts} ({reason})") from exc
+            delay = ARXIV_RETRY_DELAYS[attempt - 1]
+            print(f"Corpus paper watch: arXiv search request failed ({reason}); retrying in {delay:g} s", file=sys.stderr)
+            sleep(delay)
+
+
+def fetch_arxiv(
+    query: str, maximum: int, *, opener: Callable[..., Any] = urllib.request.urlopen, sleep: Callable[[float], None] = time.sleep
+) -> list[dict[str, Any]]:
+    """Return normalized public arXiv Atom entries for one search query.
+
+    Timeouts, connection failures, HTTP 429, and HTTP 5xx responses are retried
+    with increasing delays; other HTTP errors, such as a malformed query, fail at once.
+    """
     request = urllib.request.Request(arxiv_url(query, maximum), headers={"User-Agent": "Corpus paper watch/1.0"})
-    try:
-        with opener(request, timeout=30) as response:
-            body = response.read(4 * 1024 * 1024 + 1)
-    except (OSError, urllib.error.URLError) as exc:
-        raise WatchError("arXiv search request failed") from exc
+    body = _read_arxiv(request, opener, sleep)
     if len(body) > 4 * 1024 * 1024:
         raise WatchError("arXiv search response exceeds 4 MiB")
     try:
