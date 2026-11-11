@@ -1,4 +1,6 @@
+import http.client
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -58,6 +60,72 @@ def test_fetch_arxiv_normalizes_atom_entries_without_network():
         "doi": "10.1000/example",
         "artifacts": [{"kind": "pdf", "url": "https://arxiv.org/pdf/2609.01234.pdf"}],
     }]
+
+
+class TruncatedResponse(Response):
+    def read(self, _limit=None):
+        raise http.client.IncompleteRead(b"<feed")
+
+
+def http_error(code):
+    return urllib.error.HTTPError(arxiv_watch.ARXIV_API, code, "arXiv error", {}, None)
+
+
+def scripted_opener(outcomes):
+    """Return an opener that raises or returns each outcome in turn, counting calls."""
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(request.full_url)
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    return opener, calls
+
+
+def test_fetch_arxiv_retries_transient_failures_with_backoff(capsys):
+    opener, calls = scripted_opener([
+        urllib.error.URLError(TimeoutError("timed out")),
+        http_error(503),
+        TruncatedResponse(b""),
+        Response(ATOM),
+    ])
+    waits = []
+
+    papers = arxiv_watch.fetch_arxiv('all:"useful paper"', 10, opener=opener, sleep=waits.append)
+
+    assert [paper["arxiv_id"] for paper in papers] == ["2609.01234"]
+    assert len(calls) == 4 and len(set(calls)) == 1
+    assert waits == [5.0, 15.0, 45.0]
+    log = capsys.readouterr().err
+    assert "(TimeoutError); retrying in 5 s" in log
+    assert "(HTTP 503); retrying in 15 s" in log
+    assert "(IncompleteRead); retrying in 45 s" in log
+    assert "useful" not in log  # The query stays out of the public workflow log.
+
+
+def test_fetch_arxiv_gives_up_after_a_bounded_number_of_attempts():
+    opener, calls = scripted_opener([http_error(429)] * 10)
+    waits = []
+
+    with pytest.raises(arxiv_watch.WatchError, match=r"failed after 4 attempts \(HTTP 429\)"):
+        arxiv_watch.fetch_arxiv('all:"useful paper"', 10, opener=opener, sleep=waits.append)
+
+    assert len(calls) == 4
+    assert waits == [5.0, 15.0, 45.0]
+
+
+def test_fetch_arxiv_does_not_retry_a_rejected_query():
+    opener, calls = scripted_opener([http_error(400), Response(ATOM)])
+    waits = []
+
+    with pytest.raises(arxiv_watch.WatchError, match=r"failed after 1 attempt \(HTTP 400\)"):
+        arxiv_watch.fetch_arxiv("all:(", 10, opener=opener, sleep=waits.append)
+
+    assert len(calls) == 1
+    assert waits == []
 
 
 def test_run_remembers_seen_papers_and_merges_topic_tags(tmp_path):
