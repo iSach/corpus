@@ -280,3 +280,26 @@ def test_inbox_refreshes_new_arrivals_without_changing_the_current_paper(page,si
     page.clock.run_for(60000)
     expect(page.locator('.inbox-item')).to_have_count(3)
     expect(page.locator('.inbox-paper-title')).to_have_text('Phase boundaries from short observation contexts')
+
+
+def test_published_version_check_and_apply(page,site,monkeypatch):
+    from corpus import venues
+    neurips={'title':'Implicit posterior flows','publication_year':2021,'locations':[
+        {'source':{'display_name':'neural information processing systems','type':'conference'},'landing_page_url':'https://proceedings.neurips.cc/paper/2022/hash/abc'}]}
+    def fetch(url,headers):
+        if 'openalex' in url: return json.dumps(neurips).encode()
+        raise venues.sources.SourceError('source returned HTTP 404')
+    monkeypatch.setattr(venues,'_http',fetch)  # the server thread shares this process
+    created=page.request.post(site+'/api/papers',data={'title':'Implicit posterior flows','authors':['Raymond, A.'],'venue':'arXiv','year':2021,'arxiv_id':'2111.00001','field':'unfiled'})
+    assert created.ok
+    page.get_by_role('searchbox',name='Search query').fill('Implicit')
+    expect(page.locator('.detail-title')).to_have_text('Implicit posterior flows')
+    section=page.locator('.detail-section',has_text='PUBLISHED VERSION')
+    expect(section).to_contain_text('Not checked yet')
+    section.get_by_role('button',name='CHECK NOW').click()
+    expect(section.locator('.venue-found')).to_have_text('Advances in Neural Information Processing Systems (NeurIPS) 2022')
+    expect(section).to_contain_text('via OpenAlex')
+    section.get_by_role('button',name='APPLY').click()
+    expect(section).to_contain_text('set by you · preprint arXiv:2111.00001')
+    expect(page.locator('.detail-meta')).to_contain_text('(NeurIPS) 2022')
+    expect(page.locator('.paper-row.selected')).to_contain_text('NeurIPS')

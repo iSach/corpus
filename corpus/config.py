@@ -18,6 +18,10 @@ class Settings:
     passkey_origin: str = field(default_factory=lambda: os.getenv('CORPUS_PASSKEY_ORIGIN',''))
     dev: bool = field(default_factory=lambda: os.getenv('CORPUS_DEV','0')=='1')
     pdf_jobs: bool = True
+    venue_checks: bool = field(default_factory=lambda: os.getenv('CORPUS_VENUE_CHECKS','1')!='0')
+    venue_check_interval: float = field(default_factory=lambda: float(os.getenv('CORPUS_VENUE_CHECK_INTERVAL','5')))
+    s2_api_key: str = field(default_factory=lambda: os.getenv('CORPUS_S2_API_KEY',''))
+    openalex_api_key: str = field(default_factory=lambda: os.getenv('CORPUS_OPENALEX_API_KEY',''))
     fields: list = field(default_factory=lambda: json.loads(os.getenv('CORPUS_FIELDS','[{"id":"unfiled","label":"Unfiled"}]')))
     def __post_init__(self):
         self.passkey_origin = self.passkey_origin.rstrip('/')

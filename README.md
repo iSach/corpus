@@ -115,6 +115,10 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_SQL_LOCAL_ONLY` | `0` | Set to `1` to allow the SQL console only when the resolved client address is loopback. |
 | `CORPUS_SECURE_COOKIE` | `0` | Set to `1` when the app is served through HTTPS. |
 | `CORPUS_PASSKEY_ORIGIN` | empty (disabled) | Exact public HTTPS origin, such as `https://literature.example.org`. The hostname becomes the passkey relying-party ID. Only `http://localhost:PORT` is allowed for local passkey development. |
+| `CORPUS_VENUE_CHECKS` | `1` | Set to `0` to stop background checks for the published versions of arXiv preprints. **CHECK NOW** in the detail pane still works. |
+| `CORPUS_VENUE_CHECK_INTERVAL` | `5` | Seconds between two papers' published-version lookups. |
+| `CORPUS_S2_API_KEY` | empty | Free [Semantic Scholar API key](https://www.semanticscholar.org/product/api#api-key-form). Without it, Semantic Scholar rate-limits most lookups, and ICLR/ICML/AISTATS papers are usually only found if OpenAlex knows them. |
+| `CORPUS_OPENALEX_API_KEY` | empty | Optional OpenAlex API key. Lookups work without one. |
 | `CORPUS_DEV` | `0` | Disable login for loopback development only. Prefer `run.py --dev`. |
 
 Each PDF download is bounded to 50 MiB, each extracted PDF to 1,000 pages and 20 million characters, and request bodies to 2 MiB. The cache quota is checked before a download begins.
@@ -151,6 +155,20 @@ Existing libraries retain their papers when the migration runs. To explicitly mo
 
 The command preserves notes, scores, project assignments, and cached files. It pauses unfinished PDF downloads for those candidates and skips reviewed papers or papers with earlier Inbox decisions, so it is safe to repeat.
 
+## Published versions of preprints
+
+Many papers enter the library as arXiv preprints and are published at a conference or journal months later. arXiv only records that when the authors add a journal reference, which few do. So a background worker checks each approved preprint: weekly while it is less than two years old, monthly after that. It asks OpenAlex and Semantic Scholar, and Crossref for any DOI they name.
+
+- **Applied automatically** when a curated record backs the answer and no other venue disagrees. A curated record is either a Crossref DOI whose title matches the paper, or a DBLP entry linked through Semantic Scholar. Two independent sources agreeing also count. The year becomes the proceedings or journal year, the published DOI is added, and the arXiv identifier stays.
+- **Proposed** otherwise, and always for workshops. The detail pane's **PUBLISHED VERSION** section shows what was found and which sources said so, with **APPLY** and **NOT THIS** buttons. A dismissed answer is never proposed again. Find waiting proposals with `is:venue-proposed`.
+- **Never overridden**: if you edit a paper's venue, venue class or year, it is no longer checked.
+
+BibTeX exports cite the published venue as `@inproceedings` or `@article` and keep `eprint`/`archiveprefix` for the arXiv version. Preprints export as `journal = {arXiv preprint arXiv:…}`. To check every due paper once from a shell, using the server's environment:
+
+```sh
+.venv/bin/python -m corpus.venues --all-due
+```
+
 ## API overview
 
 The browser uses these routes:
@@ -160,6 +178,7 @@ The browser uses these routes:
 - `GET /api/papers` searches the library; `GET /api/paper?id=...` returns detail, provenance, and PDF hits; `POST /api/papers` creates or updates a paper; `POST /api/duplicates` returns near-duplicate candidates.
 - `GET /api/inbox` lists discoveries by `status` (`pending`, `later`, `approved`, or `dismissed`), `field`, `q`, `evidence`, `origin`, and `sort` (`relevance`, `newest`, or `oldest`). `POST /api/inbox/decision` takes `{ "id": ..., "action": "approve" | "dismiss" | "restore" | "return" | "defer" | "resume", "expected_modified": ..., "assessment_id": ... }`; `POST /api/inbox/undo` takes `{ "decision_id": ... }`. All require an interactive session, and the ingest token cannot make approval decisions.
 - `POST /api/review/check` prepares a PDF before admission; `GET /api/review/text` reads one extracted page; `POST /api/review/assessments` appends a structured abstract or full-text assessment; `GET /api/review/work` returns candidates awaiting assessment or prepared checks, including checks that finish after early approval. The last three routes also accept the ingest token. Assessments are independent of library admission and personal scores.
+- `POST /api/papers/venue-check` takes `{ "id": ... }`, looks for a published version now, and returns `status` (`applied`, `proposed`, `none`, `rejected-before`, or `error`) and the updated paper. `POST /api/venue-proposals/{id}` takes `{ "action": "apply" | "reject" }`.
 - `POST /api/metadata` fetches DOI or arXiv metadata; it accepts an identifier or source URL containing one of those identifiers.
 - `GET /api/catalog/search?q=...&source=library|crossref|arxiv&mode=all|title|author&offset=0` searches saved papers or a public catalog. `POST /api/catalog/resolve` accepts `{ "identifiers": [...] }` and returns per-link metadata or errors. `POST /api/capture` takes `{ "projects": [...], "papers": [...], "query": ... }` and adds or files up to 50 selected papers per request. These routes require a browser session; the ingest token cannot use manual capture.
 - `GET /api/topics` lists topics, research descriptions, and relevance criteria; `POST /api/topics` creates or updates `{ "id": ..., "label": ..., "description": ..., "relevance_criteria": ... }`. Both routes require a session. Descriptions and criteria are omitted from the public configuration response.
@@ -178,7 +197,7 @@ The query bar accepts bare terms and these filters:
 field:thesis        tag:to-read           venue:ICML  author:Raymond
 year:2025           rel:>7                state:unreviewed
 has:code            has:pdf              has:cached
-is:starred          pdf:"posterior collapse"
+is:starred          is:venue-proposed     pdf:"posterior collapse"
 sort:rel            sort:-added
 ```
 

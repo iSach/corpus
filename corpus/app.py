@@ -17,6 +17,7 @@ from .passkeys import Passkeys, install_routes as install_passkey_routes
 from .inbox import install_routes as install_inbox_routes
 from .review import install_routes as install_review_routes, prepare_pending, save_assessment
 from .capture import install_routes as install_capture_routes
+from .venues import install_routes as install_venue_routes, worker as venue_worker
 
 log=logging.getLogger('corpus')
 
@@ -68,10 +69,12 @@ def create_app(settings=None):
         with connection(settings) as db: prepare_pending(db)
         passkeys.initialize()
         stop=asyncio.Event()
-        task=asyncio.create_task(worker(settings,stop)) if settings.pdf_jobs else None
+        # pdf_jobs gates every background worker, so tests stay off the network.
+        tasks=[asyncio.create_task(worker(settings,stop))] if settings.pdf_jobs else []
+        if settings.pdf_jobs and settings.venue_checks: tasks.append(asyncio.create_task(venue_worker(settings,stop)))
         yield
         stop.set()
-        if task: await task
+        for task in tasks: await task
     app=FastAPI(title='Corpus',docs_url=None,redoc_url=None,openapi_url=None,lifespan=lifespan)
     app.state.settings=settings
     app.state.passkeys=passkeys
@@ -155,6 +158,7 @@ def create_app(settings=None):
     install_inbox_routes(app,settings)
     install_review_routes(app,settings)
     install_capture_routes(app,settings,limits)
+    install_venue_routes(app,settings,limits)
     @app.post('/api/logout')
     def logout(request:Request):
         sessions.pop(request.cookies.get('corpus_session',''),None)
@@ -186,6 +190,9 @@ def create_app(settings=None):
                 run=add_run(db,'manual','Added by hand')
                 db.execute('UPDATE ingest_run SET accepted=1 WHERE id=?',(run,))
             pid=write_paper(db,p,run,pid,query='Added by hand')
+            # An owner's venue is final: the published-version check never overrides it.
+            if old and any(p[k]!=old.get(k) for k in ('venue','venue_class','year')):
+                db.execute("UPDATE papers SET venue_source='manual' WHERE id=?",(pid,))
             return {'paper':get_paper(db,pid)}
     @app.post('/api/metadata')
     def metadata(body:dict):
