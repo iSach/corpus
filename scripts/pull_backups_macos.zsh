@@ -6,8 +6,10 @@
 #   zsh pull_backups_macos.zsh uninstall
 #
 # SSH_HOST is what you type after `ssh` to reach the server. DESTINATION
-# defaults to "Corpus Backups" in iCloud Drive; a folder on an external drive
-# works too, and a run is skipped while the drive is disconnected.
+# defaults to ~/Corpus Backups. macOS protects iCloud Drive and external drives
+# from background jobs, and a script cannot ask for access, so those folders
+# work only after /bin/zsh is given Full Disk Access. Runs are skipped while an
+# external drive is disconnected.
 #
 # install creates a dedicated key (~/.ssh/corpus_backup_pull) and authorizes
 # it on the server, through your normal login, for one forced command:
@@ -88,7 +90,7 @@ xml() { local s=$1; s=${s//&/&amp;}; s=${s//</&lt;}; s=${s//>/&gt;}; print -r --
 install() {
   [[ $(uname -s) == Darwin ]] || { print -u2 "install sets up a macOS LaunchAgent; elsewhere, schedule 'pull' yourself"; return 1 }
   HOST=${1:-}
-  DEST=${2:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Corpus Backups}
+  DEST=${2:-$HOME/Corpus Backups}
   [[ -n $HOST ]] || { print -u2 "usage: zsh $0 install SSH_HOST [DESTINATION]"; return 2 }
   [[ -d ${DEST:h} ]] || { print -u2 "missing folder: ${DEST:h}"; return 1 }
   local self=${ZSH_SCRIPT:-$0}
@@ -134,8 +136,9 @@ EOF
   print "Installed: pulls every 4 hours and at login. Latest log lines, after the first background run:"
   sleep 15
   tail -n 3 "$LOG"
-  print "If a line says 'Operation not permitted', macOS blocked background access to $DEST:"
-  print "allow it under System Settings > Privacy & Security, or reinstall with a folder outside iCloud Drive."
+  print "If a line says 'Operation not permitted', macOS blocks background access to $DEST."
+  print "Reinstall with a folder in your home folder, or give /bin/zsh Full Disk Access"
+  print "(System Settings > Privacy & Security > Full Disk Access > +, then Cmd+Shift+G and /bin/zsh)."
 }
 
 uninstall() {
