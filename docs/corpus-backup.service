@@ -6,8 +6,8 @@ Type=oneshot
 User=corpus
 Group=corpus
 UMask=0077
-WorkingDirectory=/opt/corpus
-ExecStart=/opt/corpus/.venv/bin/python /opt/corpus/scripts/backup_db.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus --keep 14
+# A standalone copy of corpus/backup.py, so backups keep running whatever is deployed in /opt/corpus.
+ExecStart=/usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/nightly --keep 14 --group-readable
 Nice=10
 NoNewPrivileges=true
 PrivateTmp=true
@@ -15,4 +15,4 @@ PrivateNetwork=true
 ProtectHome=true
 ProtectSystem=strict
 # The data directory must be writable: reading a WAL database creates -wal/-shm files.
-ReadWritePaths=/var/lib/corpus/data /var/backups/corpus
+ReadWritePaths=/var/lib/corpus/data /var/backups/corpus/nightly
