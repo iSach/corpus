@@ -479,3 +479,20 @@ def test_pdf_cache_and_retry_endpoints_queue_only_pdf_artifacts(app_client):
         ),
     ).json()["paper"]["artifacts"][0]
     assert client.post(f"/api/artifacts/{code['id']}/cache").json() == {"queued": False}
+
+
+def test_delete_paper_removes_related_data_and_search_entries(app_client):
+    client, settings = app_client
+    paper = client.post('/api/papers', json=_paper('remove-entry', artifacts=[{'kind': 'pdf', 'url': 'https://example.com/paper.pdf'}])).json()['paper']
+    pid = paper['id']
+    with connection(settings) as db:
+        artifact_id = db.execute('SELECT id FROM artifacts WHERE paper_id=?', (pid,)).fetchone()[0]
+        db.execute('INSERT INTO pdf_text(paper_id,artifact_id,page,text) VALUES(?,?,?,?)', (pid, artifact_id, 1, 'uniquedeletionterm'))
+    assert client.delete('/api/paper', params={'id': pid}).json() == {'deleted': True}
+    assert client.get('/api/paper', params={'id': pid}).status_code == 404
+    assert client.delete('/api/paper', params={'id': pid}).status_code == 404
+    with connection(settings, True) as db:
+        for table in ('paper_fts', 'artifacts', 'paper_tags', 'provenance', 'pdf_text', 'paper_projects'):
+            assert db.execute(f'SELECT count(*) FROM {table} WHERE paper_id=?', (pid,)).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM pdf_fts WHERE pdf_fts MATCH 'uniquedeletionterm'").fetchone()[0] == 0
+    assert client.post('/api/papers', json=_paper('remove-entry')).status_code == 200

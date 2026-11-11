@@ -126,7 +126,7 @@ def create_app(settings=None):
     async def database_error(request,e): return JSONResponse({'detail':str(e)},status_code=400)
     @app.get('/api/config')
     def config(request:Request):
-        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label FROM fields ORDER BY rowid')]
+        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')]
         return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request)}
     @app.get('/api/topics')
     def topics():
@@ -172,6 +172,15 @@ def create_app(settings=None):
         with connection(settings,True) as db: p=get_paper(db,id,q)
         if p is None: raise HTTPException(404,'Paper not found')
         return p
+    @app.delete('/api/paper')
+    def delete_paper(id:str):
+        with connection(settings) as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM papers WHERE id=?',(id,)).fetchone():
+                raise HTTPException(404,'Paper not found')
+            db.execute('DELETE FROM paper_fts WHERE paper_id=?',(id,))
+            db.execute('DELETE FROM papers WHERE id=?',(id,))
+        return {'deleted':True}
     @app.post('/api/duplicates')
     def duplicates(body:dict):
         if not isinstance(body.get('title',''),str): raise ValueError('Title must be text')

@@ -32,7 +32,7 @@ def test_markdown_and_sql_result_bounds(tmp_path):
 def test_default_library_starts_with_one_generic_field(tmp_path):
     settings=Settings(data_dir=tmp_path,dev=True,pdf_jobs=False)
     with TestClient(create_app(settings)) as client:
-        assert client.get('/api/config').json()['fields']==[{'id':'unfiled','label':'Unfiled'}]
+        assert client.get('/api/config').json()['fields']==[{'id':'unfiled','label':'Unfiled','symbol':''}]
         result=client.post('/api/papers',json={'title':'A general paper'})
         assert result.status_code==200
         assert result.json()['paper']['field']=='unfiled'
