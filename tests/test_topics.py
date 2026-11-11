@@ -11,13 +11,14 @@ from corpus.db import connection, initialize
 def test_research_topic_persists_and_organizes_papers(tmp_path):
     settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False)
     topic = json.loads((ROOT / 'topics/uncertainty-calibration.json').read_text())
+    topic['symbol'] = 'triangle'
     with TestClient(create_app(settings)) as client:
         response = client.post('/api/topics', json=topic)
         assert response.status_code == 200, response.text
         assert response.json()['topic'] == topic
         assert client.post('/api/topics', json=topic).status_code == 200
         assert client.get('/api/topics').json()['topics'] == [
-            {'id':'unfiled', 'label':'Unfiled', 'description':'', 'relevance_criteria':''}, topic,
+            {'id':'unfiled', 'label':'Unfiled', 'description':'', 'relevance_criteria':'', 'symbol':''}, topic,
         ]
         paper = client.post('/api/papers', json={'title':'Calibration under shift', 'field':topic['id']})
         assert paper.status_code == 200
@@ -36,20 +37,20 @@ def test_topic_descriptions_require_login_and_are_not_in_public_config(tmp_path)
         assert client.get('/api/topics').status_code == 401
         assert client.post('/api/topics', json={'id':'private','label':'Private'}).status_code == 401
         assert client.post('/api/login', json={'password':'test-password'}).status_code == 200
-        topic = {'id':'private','label':'Private','description':'An unpublished research plan.','relevance_criteria':'Private screening criteria.'}
+        topic = {'id':'private','label':'Private','description':'An unpublished research plan.','relevance_criteria':'Private screening criteria.', 'symbol':'star'}
         assert client.post('/api/topics', json=topic).status_code == 200
         assert topic in client.get('/api/topics').json()['topics']
         assert client.post('/api/topics', json=topic, headers={'Origin':'https://elsewhere.example'}).status_code == 403
         client.post('/api/logout')
         config = client.get('/api/config')
-        assert all(set(field) == {'id','label'} for field in config.json()['fields'])
+        assert all(set(field) == {'id','label','symbol'} for field in config.json()['fields'])
         assert topic['description'] not in config.text
 
 
 @pytest.mark.parametrize('changes', [
     {'id':''}, {'id':'bad topic id'}, {'id':'x'*81}, {'id':'../topic'},
     {'label':''}, {'label':'x'*121}, {'description':[]}, {'description':'x'*20001},
-    {'relevance_criteria':[]}, {'relevance_criteria':'x'*20001},
+    {'relevance_criteria':[]}, {'relevance_criteria':'x'*20001}, {'symbol':'unknown'}, {'symbol':[]},
 ])
 def test_invalid_topics_do_not_change_the_library(tmp_path, changes):
     settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False)
@@ -69,10 +70,20 @@ def test_topic_migration_retains_existing_fields_and_descriptions(tmp_path):
     initialize(settings)
     with connection(settings) as db:
         assert dict(db.execute('SELECT * FROM fields WHERE id=?', ('existing',)).fetchone()) == {
-            'id':'existing','label':'Existing topic','description':'','relevance_criteria':'',
+            'id':'existing','label':'Existing topic','description':'','relevance_criteria':'','symbol':'',
         }
         db.execute('UPDATE fields SET description=? WHERE id=?', ('A retained brief.','unfiled'))
     initialize(settings)
     with connection(settings, True) as db:
         assert db.execute('SELECT description FROM fields WHERE id=?', ('unfiled',)).fetchone()[0] == 'A retained brief.'
         assert db.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0] == 1
+
+
+def test_topic_symbol_is_preserved_when_omitted_and_can_be_cleared(tmp_path):
+    settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False)
+    with TestClient(create_app(settings)) as client:
+        topic = {'id': 'physics', 'label': 'Physics', 'symbol': 'diamond'}
+        assert client.post('/api/topics', json=topic).status_code == 200
+        assert client.post('/api/topics', json={'id': 'physics', 'label': 'New name'}).json()['topic']['symbol'] == 'diamond'
+        assert next(f for f in client.get('/api/config').json()['fields'] if f['id'] == 'physics')['symbol'] == 'diamond'
+        assert client.post('/api/topics', json={**topic, 'symbol': ''}).json()['topic']['symbol'] == ''

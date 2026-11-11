@@ -11,6 +11,33 @@
   const VIEW_NAMES = ['ROWS', 'BARS', 'LEDGER'];
   const VIEW_NOTES = ['numeric scores', 'score bars', 'ledger · zebra rows'];
   const ARTIFACT_KINDS = ['pdf', 'code', 'data', 'slides', 'video', 'other'];
+  const PROJECT_SYMBOLS = { triangle: '▲', circle: '●', square: '■', diamond: '◆', star: '★', cross: '✚', hexagon: '⬢', pentagon: '⬟' };
+
+  function projectSymbol(symbol) {
+    // A shared viewbox and explicit geometry keep icons independent of font metrics.
+    const paths = {
+      triangle: 'M12 3 22 21H2Z', circle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
+      square: 'M4 4h16v16H4Z', diamond: 'M12 1 23 12 12 23 1 12Z',
+      star: 'm12 1 3.4 7 7.6 1.1-5.5 5.4 1.3 7.5-6.8-3.6L5.2 22l1.3-7.5L1 9.1 8.6 8Z',
+      cross: 'M8 2h8v6h6v8h-6v6H8v-6H2V8h6Z',
+      hexagon: 'M6.5 2.5h11L23 12l-5.5 9.5h-11L1 12Z',
+      pentagon: 'M12 1 23 9l-4.2 13H5.2L1 9Z'
+    };
+    if (!paths[symbol]) return null;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', `project-symbol symbol-${symbol}`);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '1em'); svg.setAttribute('height', '1em');
+    svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    const path = document.createElementNS(svg.namespaceURI, 'path');
+    path.setAttribute('d', paths[symbol]); path.setAttribute('fill', 'currentColor');
+    svg.appendChild(path);
+    return svg;
+  }
+  function projectName(id) {
+    const field = state.config.fields.find(item => item.id === id);
+    return h('span', { class: 'project-name' }, projectSymbol(field && field.symbol), field ? field.label : id);
+  }
 
   const persistedView = (() => {
     try { return Math.max(0, Math.min(2, Number(localStorage.getItem('corpus.view') || 0))); }
@@ -33,6 +60,7 @@
     limit: 100,
     sort: 'rel',
     resultFacets: {},
+    fieldCounts: [],
     queryError: '',
     selectedId: null,
     selectedDetail: null,
@@ -51,6 +79,8 @@
     topics: [],
     topicsLoading: false,
     topicsError: '',
+    topicsQuery: '',
+    topicOriginal: '',
     topicForm: null,
     topicSaving: false,
     passkeySettings: { keys: [], loading: false, error: '', name: 'iCloud Keychain', password: '', busy: false },
@@ -87,7 +117,7 @@
   let inboxDetailRequest = 0;
   let inboxTimer = null;
   const capture = window.CorpusCapture({ h, api, render, toast,
-    fields: () => state.config.fields,
+    fields: () => state.config.fields, projectSymbol,
     currentProjects: () => state.facetFilters.field,
     onProjects: projects => { if (state.form && !state.form.id) { state.form.projects = [...projects]; if (!projects.includes(state.form.field)) state.form.field = projects[0] || ''; } },
     onAdded: () => { state.papers = []; state.selectedDetail = null; loadStats(true).then(() => { if (state.stats) state.libraryTotal = state.stats.total; render(); }); },
@@ -260,7 +290,13 @@
     state.loadingPapers = true;
     render();
     try {
-      const data = await api(`/api/papers?${params}`);
+      const fieldFacets = buildFacetPayload();
+      delete fieldFacets.field;
+      const fieldParams = new URLSearchParams({ q: state.q, facets: JSON.stringify(fieldFacets), limit: '1', offset: '0' });
+      const [data, fieldData] = await Promise.all([
+        api(`/api/papers?${params}`),
+        state.facetFilters.field.length ? api(`/api/papers?${fieldParams}`) : Promise.resolve(null)
+      ]);
       if (requestId !== papersRequest) return;
       state.papers = Array.isArray(data.papers) ? data.papers : [];
       state.total = Number(data.total || 0);
@@ -268,6 +304,7 @@
       state.elapsed = data.elapsed_ms == null ? null : data.elapsed_ms;
       state.sort = data.sort || state.sort;
       state.resultFacets = data.facets || {};
+      state.fieldCounts = (fieldData || data).facets?.field || [];
       state.queryError = '';
       if (!state.papers.length) { state.selectedId = null; state.selectedDetail = null; ++paperRequest; state.selectedLoading = false; }
       if (state.selectedId && !state.papers.some(p => String(p.id) === String(state.selectedId)) && state.papers.length) {
@@ -345,6 +382,20 @@
       toast('Smart list deleted');
     } catch (error) { toast(getError(error), true); }
   }
+  async function deletePaper(paper) {
+    if (!paper || !window.confirm(`Remove “${paper.title}” from your library? Its notes and review records will also be deleted.`)) return;
+    try {
+      await api(`/api/paper?id=${encodeURIComponent(paper.id)}`, { method: 'DELETE' });
+      ++paperRequest;
+      state.selection.delete(paper.id);
+      state.selectedId = null;
+      state.selectedDetail = null;
+      if (state.offset && state.papers.length === 1) state.offset = Math.max(0, state.offset - state.limit);
+      window.history.replaceState({}, '', routeUrl('library', null));
+      await Promise.all([loadPapers(), loadStats(true)]);
+      toast('Paper removed');
+    } catch (error) { toast(getError(error), true); }
+  }
   function applySavedFacets(facets) {
     const saved = facets && typeof facets === 'object' ? facets : {};
     FACET_KEYS.forEach(key => { state.facetFilters[key] = Array.isArray(saved[key]) ? saved[key].map(String) : []; });
@@ -382,7 +433,7 @@
     try {
       const data = await api('/api/topics');
       state.topics = data.topics;
-      state.config.fields = data.topics.map(topic => ({ id: topic.id, label: topic.label }));
+      state.config.fields = data.topics.map(topic => ({ id: topic.id, label: topic.label, symbol: topic.symbol }));
     } catch (error) { state.topicsError = getError(error); }
     finally { state.topicsLoading = false; render(); }
   }
@@ -394,7 +445,7 @@
     const topic = state.topicForm;
     render();
     try {
-      await api('/api/topics', { method: 'POST', body: { id: topic.id, label: topic.label, description: topic.description, relevance_criteria: topic.relevance_criteria || '' } });
+      await api('/api/topics', { method: 'POST', body: { id: topic.id, label: topic.label, description: topic.description, relevance_criteria: topic.relevance_criteria || '', symbol: topic.symbol || '' } });
       state.topicForm = null;
       state.inbox.detail = null; // The open Inbox card shows this topic's brief; reload it on return.
       await loadTopics();
@@ -1185,13 +1236,15 @@
     const sections = [
       ['field', 'FIELD'], ['state', 'STATUS'], ['has', 'ARTIFACTS'], ['venue_class', 'VENUE'], ['year', 'YEAR']
     ].map(([key, title]) => {
-      const rows = key === 'field' ? (state.config.fields || []).map(field => ({ value: field.id, count: (facetRows(key).find(row => String(row.value) === String(field.id)) || {}).count || 0 })) : facetRows(key);
+      const rows = key === 'field' ? (state.config.fields || []).map(field => ({ value: field.id, count: (state.fieldCounts.find(row => String(row.value) === String(field.id)) || {}).count || 0, visibleCount: (facetRows(key).find(row => String(row.value) === String(field.id)) || {}).count || 0 })) : facetRows(key);
       if (!rows.length) return null;
       return h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, title), ...rows.map(row => {
         const checked = (state.facetFilters[key] || []).some(value => String(value) === String(row.value));
-        return h('label', { class: 'facet-option' },
+        const visibleCount = row.visibleCount == null ? row.count : row.visibleCount;
+        const unavailable = visibleCount != null && Number(visibleCount) === 0;
+        return h('label', { class: `facet-option${unavailable ? ' facet-option-empty' : ''}`, title: unavailable ? 'No matching papers' : '' },
           h('input', { type: 'checkbox', checked, onchange: event => toggleFacet(key, row.value, event.target.checked) }),
-          h('span', { class: 'facet-label' }, key === 'field' ? fieldLabel(row.value) : row.value),
+          h('span', { class: 'facet-label' }, key === 'field' ? projectName(row.value) : row.value),
           row.count == null ? null : h('span', { class: 'facet-count' }, row.count)
         );
       }));
@@ -1304,7 +1357,7 @@
     paperLinks.push(h('button', { class: 'artifact-link', type: 'button', onclick: () => copyPaperBibtex(paper) }, 'bibtex'));
     const noteNode = paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes ? document.createTextNode(paper.notes) : h('span', { class: 'soft' }, 'No note');
     return h('aside', { class: 'detail-pane', 'data-scroll-key': 'detail-pane' },
-      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.id)), h('span', null, (paper.projects || [paper.field]).map(fieldLabel).join(' · '))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'))),
+      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
       renderPublication(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
@@ -1420,7 +1473,7 @@
       class: `paper-row inbox-item${inbox.selectedId === item.id ? ' selected' : ''}`, type: 'button', disabled: inbox.busy,
       ariaLabel: `Show ${item.title}`, 'aria-pressed': String(inbox.selectedId === item.id), onclick: () => { inbox.mobileList = false; loadInboxPaper(item.id); }
     }, h('span', { class: 'inbox-item-title' }, item.title),
-    h('span', { class: 'inbox-item-meta' }, `${fieldLabel(item.field)} · ${fmt(item.year)} · ${formatDate(item.added)}`),
+    h('span', { class: 'inbox-item-meta' }, projectName(item.field), ` · ${fmt(item.year)} · ${formatDate(item.added)}`),
     h('span', { class: 'inbox-item-meta' }, `${item.assessor && item.assessor !== 'not-assessed' ? `${item.priority} relevance · ${item.stage === 'full_text' ? 'full text' : 'abstract'}` : 'awaiting assessment'}${item.proposed_rel == null ? '' : ` · suggested ${scoreLabel(item.proposed_rel)}/10`}`)));
     const pager = h('div', { class: 'table-footer inbox-pagination' },
       h('button', { class: 'btn', type: 'button', ariaLabel: 'Inbox previous page', disabled: inbox.busy || inbox.offset <= 0, onclick: () => { inbox.offset = Math.max(0, inbox.offset - inbox.limit); loadInbox(); } }, '‹'),
@@ -1443,7 +1496,7 @@
       detail = h('article', { class: 'inbox-paper' },
         h('header', { class: 'detail-header inbox-paper-header' },
           h('button', { class: 'btn btn-quiet inbox-mobile-back', type: 'button', ariaLabel: 'Back to papers', onclick: () => { inbox.mobileList = true; inbox.filtersOpen = false; render(); } }, '← PAPERS'),
-          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.id), h('span', null, fieldLabel(paper.field))),
+          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.id), h('span', null, projectName(paper.field))),
           h('h1', { class: 'detail-title inbox-paper-title' }, paper.title),
           h('div', { class: 'detail-meta inbox-paper-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} · ${fmt(paper.year)}`),
           h('div', { class: 'artifact-list' }, paper.canonical_url ? h('a', { class: 'artifact-link', href: paper.canonical_url, target: '_blank', rel: 'noopener' }, 'SOURCE ↗') : null, ...links,
@@ -1535,7 +1588,7 @@
           state.form.projects = event.target.checked ? [...state.form.projects, field.id] : state.form.projects.filter(id => id !== field.id);
           if (!state.form.projects.includes(state.form.field)) state.form.field = state.form.projects[0] || '';
           if (!state.form.id) capture.setProjects(state.form.projects); else render();
-        } }), field.label)))),
+        } }), projectSymbol(field.symbol), field.label)))),
       formInput('STATE', 'state', { select: ['unreviewed', 'reviewed', 'archived'] }),
       h('div', { class: 'form-line' }, h('label', { class: 'form-label', for: 'form-starred' }, 'STARRED'), h('input', { id: 'form-starred', 'data-focus-key': 'form-starred', type: 'checkbox', checked: state.form.starred, style: { margin: '8px' }, ariaLabel: 'Star paper', onchange: event => updateForm('starred', event.target.checked) })),
       formInput('CANONICAL URL', 'canonical_url', { placeholder: 'https://…' }),
@@ -1576,34 +1629,70 @@
     );
   }
 
+  function closeTopicEditor() {
+    if (state.topicSaving) return false;
+    if (state.topicForm && JSON.stringify(state.topicForm) !== state.topicOriginal && !window.confirm('Discard unsaved topic changes?')) return false;
+    state.topicForm = null;
+    state.topicsError = '';
+    return true;
+  }
+
+  function editTopic(topic) {
+    if (!closeTopicEditor()) return;
+    state.topicForm = topic ? { ...topic, existing: true } : { id: '', label: '', description: '', relevance_criteria: '', symbol: '' };
+    state.topicOriginal = JSON.stringify(state.topicForm);
+    render();
+    document.getElementById('topic-label').focus();
+  }
+
   function renderTopics() {
-    const cards = state.topics.map(topic => h('article', { class: 'topic-card' },
-      h('h2', null, topic.label),
-      h('p', { class: 'topic-description' }, topic.description || 'No description yet.'),
-      topic.relevance_criteria ? h('details', null, h('summary', null, 'Relevance criteria'), h('p', { class: 'topic-description' }, topic.relevance_criteria)) : null,
-      h('div', { class: 'detail-actions' },
-        h('button', { class: 'btn', type: 'button', ariaLabel: `View papers in ${topic.label}`, onclick: () => { state.q = ''; applySavedFacets({ field: [topic.id] }); state.offset = 0; navigate('library'); loadPapers(); } }, 'VIEW PAPERS'),
-        h('button', { class: 'btn', type: 'button', ariaLabel: `Edit ${topic.label}`, onclick: () => { state.topicForm = { ...topic, existing: true }; render(); } }, 'EDIT TOPIC')
-      )
-    ));
     const form = state.topicForm;
-    const editor = form ? h('form', { class: 'topic-editor', onsubmit: event => { event.preventDefault(); saveTopic(); } },
-      h('h2', null, form.existing ? 'Edit topic' : 'New topic'),
-      h('label', { for: 'topic-label' }, 'NAME'),
-      h('input', { id: 'topic-label', class: 'input', value: form.label, required: true, maxlength: 120, oninput: event => { form.label = event.target.value; } }),
-      h('label', { for: 'topic-id' }, 'TOPIC ID'),
-      h('input', { id: 'topic-id', class: 'input', value: form.id, required: true, disabled: form.existing, maxlength: 80, pattern: '[a-zA-Z0-9][a-zA-Z0-9_-]*', oninput: event => { form.id = event.target.value; } }),
-      h('label', { for: 'topic-description' }, 'RESEARCH DESCRIPTION'),
-      h('textarea', { id: 'topic-description', class: 'input topic-description-input', value: form.description, rows: 14, maxlength: 20000, oninput: event => { form.description = event.target.value; } }),
-      h('label', { for: 'topic-criteria' }, 'RELEVANCE CRITERIA'),
-      h('textarea', { id: 'topic-criteria', class: 'input topic-description-input', value: form.relevance_criteria || '', rows: 10, maxlength: 20000, oninput: event => { form.relevance_criteria = event.target.value; } }),
-      h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.topicSaving }, state.topicSaving ? 'SAVING…' : 'SAVE TOPIC'), h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, onclick: () => { state.topicForm = null; render(); } }, 'CANCEL'))
-    ) : h('div', { class: 'topic-editor' }, h('h2', null, 'Research topics'), h('p', null, 'Keep a research brief with each topic, then use topics to organize and filter your papers.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { state.topicForm = { id: '', label: '', description: '' }; render(); } }, 'NEW TOPIC'));
-    return h('main', { class: 'topics-layout', 'data-scroll-key': 'topics-layout' },
-      state.topicsError ? h('div', { class: 'notice error-text' }, state.topicsError) : null,
-      h('section', { class: 'topic-list', ariaLabel: 'Research topics' }, state.topicsLoading && !cards.length ? h('div', { class: 'empty' }, 'Loading topics…') : cards),
-      editor
-    );
+    const query = state.topicsQuery.trim().toLowerCase();
+    const topics = state.topics.filter(topic => `${topic.label} ${topic.id} ${topic.description}`.toLowerCase().includes(query));
+    const viewPapers = topic => {
+      if (!closeTopicEditor()) return;
+      state.q = ''; applySavedFacets({ field: [topic.id] }); state.offset = 0; navigate('library'); loadPapers();
+    };
+    const rows = topics.map(topic => h('article', { class: `topic-row${form && form.existing && form.id === topic.id ? ' active' : ''}` },
+      h('div', { class: 'topic-row-identity' },
+        h('span', { class: 'topic-symbol-slot' }, projectSymbol(topic.symbol) || h('span', { class: 'topic-no-symbol', ariaHidden: true }, '—')),
+        h('div', { class: 'topic-row-copy' },
+          h('h2', { ariaLabel: topic.label }, h('button', { class: 'topic-name-button', type: 'button', disabled: state.topicSaving, ariaLabel: `Edit ${topic.label}`, onclick: () => editTopic(topic) }, topic.label)),
+          h('p', { class: 'topic-description', title: topic.description }, topic.description || 'No research description'))),
+      h('div', { class: 'topic-row-actions' },
+        h('span', { class: `topic-criteria-status${topic.relevance_criteria ? ' configured' : ''}`, title: topic.relevance_criteria ? 'Relevance criteria configured' : 'No relevance criteria yet' }, topic.relevance_criteria ? 'Criteria set' : 'No criteria'),
+        h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, ariaLabel: `View papers in ${topic.label}`, onclick: () => viewPapers(topic) }, 'View papers'))
+    ));
+    const editor = form ? h('form', { class: 'topic-editor', ariaLabel: form.existing ? 'Edit topic' : 'New topic', onsubmit: event => { event.preventDefault(); saveTopic(); } },
+      h('header', { class: 'topic-editor-heading' }, h('div', null, h('h2', null, form.existing ? 'Edit topic' : 'New topic'), h('p', null, form.existing ? form.label : 'Organize a new area of research.')),
+        h('button', { class: 'btn', type: 'button', ariaLabel: 'Close topic editor', disabled: state.topicSaving, onclick: () => { if (closeTopicEditor()) render(); } }, '×')),
+      h('fieldset', { class: 'topic-editor-fields', disabled: state.topicSaving },
+        h('label', { for: 'topic-label' }, 'Name'),
+        h('input', { id: 'topic-label', class: 'input', value: form.label, required: true, maxlength: 120, placeholder: 'e.g. Uncertainty calibration', oninput: event => { form.label = event.target.value; } }),
+        h('label', { for: 'topic-id' }, 'Topic ID'),
+        h('input', { id: 'topic-id', class: 'input', value: form.id, required: true, disabled: form.existing, maxlength: 80, pattern: '[a-zA-Z0-9][a-zA-Z0-9_-]*', 'aria-describedby': 'topic-id-help', placeholder: 'uncertainty-calibration', oninput: event => { form.id = event.target.value; } }),
+        h('p', { id: 'topic-id-help', class: 'topic-help' }, form.existing ? 'Permanent identifier used in search and paper links.' : 'Use letters, numbers, hyphens or underscores. This cannot be changed later.'),
+        h('fieldset', { class: 'symbol-picker' }, h('legend', null, 'Project symbol'),
+          h('div', { class: 'symbol-options' }, ...[['', 'None'], ...Object.keys(PROJECT_SYMBOLS).map(symbol => [symbol, symbol[0].toUpperCase() + symbol.slice(1)])].map(([symbol, label]) =>
+            h('label', { class: 'symbol-choice', title: label }, h('input', { id: `topic-symbol-${symbol || 'none'}`, type: 'radio', name: 'topic-symbol', value: symbol, ariaLabel: label, checked: (form.symbol || '') === symbol, onchange: () => { form.symbol = symbol; } }), h('span', { class: 'symbol-tile' }, projectSymbol(symbol) || '—'), h('span', { class: 'symbol-choice-name' }, label)))),
+          h('p', { class: 'topic-help' }, 'Distinct shapes keep projects recognizable without relying on color.')),
+        h('label', { for: 'topic-description' }, 'Research description'),
+        h('textarea', { id: 'topic-description', class: 'input topic-description-input', value: form.description, rows: 4, maxlength: 20000, placeholder: 'What questions does this topic cover?', oninput: event => { form.description = event.target.value; } }),
+        h('label', { for: 'topic-criteria' }, 'Relevance criteria'),
+        h('p', { id: 'topic-criteria-help', class: 'topic-help' }, 'Describe which papers belong here to guide relevance assessments.'),
+        h('textarea', { id: 'topic-criteria', class: 'input topic-description-input', value: form.relevance_criteria || '', rows: 5, maxlength: 20000, 'aria-describedby': 'topic-criteria-help', placeholder: 'Include methods, applications, or evidence to look for…', oninput: event => { form.relevance_criteria = event.target.value; } })),
+      state.topicsError ? h('div', { class: 'notice error-text', role: 'alert' }, state.topicsError) : null,
+      h('footer', { class: 'topic-editor-actions' }, h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, onclick: () => { if (closeTopicEditor()) render(); } }, 'Cancel'), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.topicSaving }, state.topicSaving ? 'Saving…' : 'Save topic'))
+    ) : null;
+    return h('main', { class: `topics-layout${form ? ' editing' : ''}` },
+      h('header', { class: 'topics-header' }, h('div', null, h('h1', null, 'Topics'), h('p', null, 'Organize projects, assign symbols, and define what makes a paper relevant.')),
+        h('button', { class: 'btn btn-primary', type: 'button', disabled: state.topicSaving, onclick: () => editTopic() }, '+ New topic')),
+      h('div', { class: 'topics-workspace' },
+        h('section', { class: 'topic-list', ariaLabel: 'Research topics' },
+          h('div', { class: 'topics-toolbar' }, h('input', { id: 'topics-search', class: 'input', type: 'search', ariaLabel: 'Search topics', placeholder: 'Search topics…', value: state.topicsQuery, oninput: event => { state.topicsQuery = event.target.value; render(); } }), h('span', { role: 'status' }, query ? `${topics.length} of ${state.topics.length}` : `${state.topics.length} topics`)),
+          !form && state.topicsError ? h('div', { class: 'notice', role: 'alert' }, state.topicsError, h('button', { class: 'btn', type: 'button', onclick: loadTopics }, 'Retry')) : null,
+          h('div', { class: 'topic-rows', 'data-scroll-key': 'topic-rows' }, rows.length ? rows : h('div', { class: 'empty' }, state.topicsLoading ? 'Loading topics…' : query ? 'No topics match your search.' : 'Create a topic to start organizing your research.'))),
+        editor));
   }
 
   function syntaxHelp() {

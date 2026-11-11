@@ -1,7 +1,7 @@
 /* Interactive capture stays separate from the detailed paper editor. */
 (function () {
   'use strict';
-  window.CorpusCapture = function ({ h, api, render, toast, fields, currentProjects, onAdded, openPaper, openInbox, onProjects }) {
+  window.CorpusCapture = function ({ h, api, render, toast, fields, projectSymbol, currentProjects, onAdded, openPaper, openInbox, onProjects }) {
     const c = { mode: 'search', query: '', input: '', searchIn: 'all', projects: [], initialized: false, expanded: null,
       items: [], selected: new Set(), focused: null, offset: 0, states: {}, errors: [], busy: false,
       projectsOpen: false, generation: 0, controller: null, timer: null, lastArxiv: 0, more: false, fallbackTitle: '' };
@@ -185,7 +185,7 @@
     function projectsRail() {
       return h('aside', { class: 'facet-rail capture-projects', ariaLabel: 'Projects to add papers to' },
         h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, 'ADD TO PROJECTS'),
-          ...fields().map(field => h('label', { class: 'facet-option' }, h('input', { type: 'checkbox', checked: c.projects.includes(field.id), onchange: event => project(field.id, event.target.checked) }), h('span', { class: 'facet-label' }, field.label))),
+          ...fields().map(field => h('label', { class: 'facet-option' }, h('input', { type: 'checkbox', checked: c.projects.includes(field.id), onchange: event => project(field.id, event.target.checked) }), h('span', { class: 'facet-label' }, projectSymbol(field.symbol), field.label))),
           h('p', { class: 'capture-hint' }, 'Your choices stay selected for the next paper.')),
         h('section', { class: 'facet-section' }, h('label', { class: 'facet-title', for: 'capture-search-in' }, 'SEARCH IN'), h('select', { id: 'capture-search-in', class: 'select', value: c.searchIn, onchange: event => { c.searchIn = event.target.value; if (c.query) search(); } },
           ...[['all','Titles & authors'],['title','Titles'],['author','Authors']].map(([value, title]) => h('option', { value, selected: c.searchIn === value }, title)))),
