@@ -156,3 +156,18 @@ def test_mobile_queue_and_reading_are_separate_views(review_page):
     expect(page.locator('.inbox-filter-rail')).not_to_be_visible()
     expect(page.locator('.inbox-paper-title')).to_be_visible()
     assert page.evaluate('document.documentElement.scrollWidth')<=390
+
+
+def test_topic_edits_keep_the_assessment_and_show_the_current_brief(review_page):
+    page,site,pid=review_page
+    page.get_by_role('link',name='Topics',exact=True).click()
+    page.get_by_role('button',name='Edit Unfiled',exact=True).click()
+    page.locator('#topic-label').fill('Renamed fixture topic')
+    page.locator('#topic-description').fill('An edited fixture brief.')
+    page.get_by_role('button',name='SAVE TOPIC',exact=True).click()
+    expect(page.get_by_role('heading',name='Renamed fixture topic',exact=True)).to_be_visible()
+    page.get_by_role('link',name='Inbox',exact=True).click()
+    expect(page.locator('.review-explanation')).to_have_text('The abstract reports transfer across physical regimes.')
+    expect(page.locator('.evidence-level')).to_have_text('Abstract only')
+    page.locator('.review-criteria summary').click()
+    expect(page.locator('.review-criteria-text')).to_have_text('An edited fixture brief.')
