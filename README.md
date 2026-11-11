@@ -241,7 +241,7 @@ sudo -u corpus /usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --veri
 
 ### Copy backups to a Mac
 
-`scripts/pull_backups_macos.zsh` pulls finished snapshots to a Mac over SSH, by default into iCloud Drive. Its dedicated key may run only `backup.py --serve`, which lists snapshots and streams one: it gets no shell and cannot change anything on the server. A download is kept only if its SHA-256 matches the server's, and the Mac keeps its newest 30 snapshots (`CORPUS_PULL_KEEP`).
+`scripts/pull_backups_macos.zsh` pulls finished snapshots to a Mac over SSH, by default into `~/Corpus Backups`. Its dedicated key may run only `backup.py --serve`, which lists snapshots and streams one: it gets no shell and cannot change anything on the server. A download is kept only if its SHA-256 matches the server's, and the Mac keeps its newest 30 snapshots (`CORPUS_PULL_KEEP`).
 
 On the server, let your SSH account read the snapshots, which the service writes as `0640` because of `--group-readable`:
 
@@ -259,7 +259,9 @@ On the Mac, copy the script over and install it, passing the host you use with `
 zsh pull_backups_macos.zsh install your-server
 ```
 
-It authorizes its key through your normal SSH login and runs a first pull. Then it installs a LaunchAgent that pulls every four hours and at login; a run missed while the Mac sleeps happens on wake. A second argument picks another folder, such as one on an external drive; runs are skipped while that drive is disconnected. The log is `~/Library/Logs/corpus-backup-pull.log`. If the background run logs `Operation not permitted`, macOS has blocked background access to that folder: allow it under **System Settings > Privacy & Security**, or choose a folder outside iCloud Drive. `zsh pull_backups_macos.zsh uninstall` removes the LaunchAgent and keeps the backups.
+It authorizes its key through your normal SSH login and runs a first pull. Then it installs a LaunchAgent that pulls every four hours and at login; a run missed while the Mac sleeps happens on wake. A second argument picks another folder; runs are skipped while an external drive is disconnected. The log is `~/Library/Logs/corpus-backup-pull.log`.
+
+macOS protects iCloud Drive and external drives from background jobs. A shell script cannot show the permission prompt, so the background run logs `Operation not permitted`, even though the first pull from Terminal worked, and no entry appears under Privacy & Security to switch on. To use such a folder, give `/bin/zsh` Full Disk Access (**System Settings > Privacy & Security > Full Disk Access > +**, then Cmd+Shift+G and `/bin/zsh`). That grant covers every background zsh script, so the home-folder default is the narrower choice; Time Machine then also copies it to its backup drive. `zsh pull_backups_macos.zsh uninstall` removes the LaunchAgent and keeps the backups.
 
 ### Restore a nightly backup
 
