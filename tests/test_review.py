@@ -215,6 +215,21 @@ def test_topic_change_preserves_but_invalidates_old_assessments(library):
     assert old['id'] in [entry['id'] for entry in new['history']]
 
 
+@pytest.mark.parametrize('action',['dismiss','approve','defer'])
+def test_undo_back_to_pending_resumes_unfinished_full_text_preparation(library,action):
+    client,settings=library
+    pid=ingest(client,proposal(assessment=assessment()))['results'][0]['id']
+    assert paper(client,pid)['review']['check']['status']=='queued'
+    decided=decision(client,pid,action)
+    assert decided.status_code==200,decided.text
+    undone=client.post('/api/inbox/undo',json={'decision_id':decided.json()['decision']['id']})
+    assert undone.status_code==200,undone.text
+    restored=paper(client,pid)
+    assert restored['admission']=='pending' and restored['review']['check']['status']=='queued'
+    artifact=jobs.next_artifact(settings)
+    assert artifact and artifact['paper_id']==pid
+
+
 def test_dismissing_cancels_pending_review_download(library,monkeypatch):
     client,settings=library
     pid=ingest(client,proposal(assessment=assessment()))['results'][0]['id']

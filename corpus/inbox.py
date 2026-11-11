@@ -81,7 +81,7 @@ def decide(db, paper_id, action, expected_modified=None, assessment_id=None):
     before, after = transitions[action]
     if paper['admission'] != before or (expected_modified is not None and expected_modified != paper['modified']):
         raise HTTPException(409,'This paper changed; refresh the Inbox before deciding')
-    from .review import current, ensure_abstract
+    from .review import current
     latest = current(db,paper_id)
     if assessment_id is not None:
         # Record the assessment actually displayed, even if a later check arrived
@@ -94,12 +94,17 @@ def decide(db, paper_id, action, expected_modified=None, assessment_id=None):
     defer = (datetime.now(timezone.utc)+timedelta(days=1)).isoformat() if action=='defer' else None
     result = set_admission(db,paper,after,assessment_id=assessment_id,deferred_until=defer)
     if after=='pending':
-        ensure_abstract(db,paper_id)
-        from .review import summary, request_check
-        review = summary(db,paper_id)
-        if review['check'] and review['check']['status'] in ('queued','preparing'):
-            request_check(db,paper_id,review['check']['reason'])
+        resume_review(db,paper_id)
     return result
+
+
+def resume_review(db, paper_id):
+    """set_admission pauses PDF work for pending papers; restart an unfinished full-text check."""
+    from .review import ensure_abstract, summary, request_check
+    ensure_abstract(db,paper_id)
+    review = summary(db,paper_id)
+    if review['check'] and review['check']['status'] in ('queued','preparing'):
+        request_check(db,paper_id,review['check']['reason'])
 
 
 def undo(db, decision_id):
@@ -114,7 +119,10 @@ def undo(db, decision_id):
     if (not paper or latest != decision_id or paper['admission'] != decision['after_admission']
             or paper['modified'] != decision['paper_modified'] or decision['undo_of'] is not None):
         raise HTTPException(409,'This decision can no longer be undone; the paper changed')
-    return set_admission(db,paper,decision['before_admission'],decision_id,deferred_until=decision['before_deferred_until'])
+    result = set_admission(db,paper,decision['before_admission'],decision_id,deferred_until=decision['before_deferred_until'])
+    if decision['before_admission']=='pending':
+        resume_review(db,paper['id'])
+    return result
 
 
 def stage_agent(db, agent):
