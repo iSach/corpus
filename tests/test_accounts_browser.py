@@ -42,6 +42,16 @@ def test_admin_invites_friend_who_sets_password_and_gets_private_library(account
         admin.get_by_role('button',name='ENTER',exact=True).click()
         admin.get_by_role('button',name='PEOPLE',exact=True).click()
         expect(admin.get_by_role('heading',name='People & invitations')).to_be_visible()
+        # The credential handoff works from a phone without showing the key.
+        admin.set_viewport_size({'width':390,'height':844})
+        admin.route('**/api/admin/mail/resend', lambda route: route.fulfill(status=200,content_type='application/json',body='{"saved":true}'))
+        key_input = admin.get_by_label('RESEND API KEY',exact=True)
+        assert key_input.get_attribute('type') == 'password'
+        key_input.fill('re_browser_setup_test_key')
+        admin.get_by_role('button',name='SAVE RESEND KEY',exact=True).click()
+        expect(key_input).to_have_value('')
+        expect(admin.get_by_text('Your Resend key is saved securely.',exact=False)).to_be_visible()
+        admin.set_viewport_size({'width':1440,'height':900})
         admin.get_by_label('FRIEND’S EMAIL').fill('friend@example.org')
         admin.get_by_role('button',name='CREATE INVITATION LINK',exact=True).click()
         link = admin.get_by_role('textbox',name='Invitation link')

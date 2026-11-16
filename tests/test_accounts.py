@@ -343,3 +343,41 @@ def test_overlapping_resends_leave_one_valid_invitation(site):
     visitor = TestClient(app,base_url=ORIGIN)
     statuses = [visitor.post('/api/invitations/inspect',json={'token':token(item)}).status_code for item in invites]
     assert sorted(statuses) == [200,400]
+
+
+def test_resend_phone_setup_requires_admin_and_never_returns_key(site,monkeypatch):
+    import io,stat
+    app,admin,settings = site
+    member,_ = join(app,invitation(admin))
+    visitor = TestClient(app,base_url=ORIGIN)
+    key = 're_a_private_setup_test_key_12345'
+    assert visitor.post('/api/admin/mail/resend',json={'api_key':key}).status_code == 401
+    assert member.post('/api/admin/mail/resend',json={'api_key':key}).status_code == 403
+    assert admin.post('/api/admin/mail/resend',headers={'Origin':'https://attacker.example'},json={'api_key':key}).status_code == 403
+    assert admin.post('/api/admin/mail/resend',json={'api_key':'invalid'}).status_code == 400
+    def validate(request,timeout):
+        assert request.full_url == 'https://api.resend.com/domains'
+        assert request.get_header('Authorization') == 'Bearer '+key
+        return io.BytesIO(b'{"data":[]}')
+    monkeypatch.setattr(account_module.urllib.request,'urlopen',validate)
+    response = admin.post('/api/admin/mail/resend',json={'api_key':key})
+    assert response.status_code == 200 and response.json() == {'saved':True}
+    assert key not in response.text
+    path = settings.data_dir/'mail-setup'/'resend-key'
+    assert path.read_text().strip() == key
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    data = admin.get('/api/admin/accounts')
+    assert data.json()['mail_setup_pending'] and key not in data.text
+    assert admin.get('/api/admin/mail/resend').status_code == 405
+
+
+def test_resend_setup_rejects_sending_only_key_without_storing_it(site,monkeypatch):
+    import urllib.error
+    app,admin,settings = site
+    def deny(request,timeout):
+        raise urllib.error.HTTPError(request.full_url,403,'Forbidden',{},None)
+    monkeypatch.setattr(account_module.urllib.request,'urlopen',deny)
+    response = admin.post('/api/admin/mail/resend',json={'api_key':'re_sending_only_key_12345'})
+    assert response.status_code == 400 and 'Full access' in response.json()['detail']
+    assert not (settings.data_dir/'mail-setup'/'resend-key').exists()

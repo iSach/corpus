@@ -5,7 +5,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
   if (token) window.history.replaceState(null, '', window.location.pathname + window.location.search);
   const state = { token, invitation: null, inviteError: '', password: '', confirm: '', busy: false,
     loading: false, error: '', users: [], invitations: [], emailEnabled: false, origin: '', email: '', link: null,
-    currentPassword: '', newPassword: '', accountEmail: '' };
+    currentPassword: '', newPassword: '', accountEmail: '', resendKey: '', mailPending: false };
   const errorText = error => error.message || String(error);
   const date = value => new Date(value * 1000).toLocaleString();
   function notice(value) { return value ? h('p', { class: 'notice error-text', role: 'alert' }, value) : null; }
@@ -50,9 +50,22 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     try {
       const data = await api('/api/admin/accounts');
       state.users = data.users; state.invitations = data.invitations;
-      state.emailEnabled = data.email_enabled; state.origin = data.public_origin;
+      state.emailEnabled = data.email_enabled; state.origin = data.public_origin; state.mailPending = data.mail_setup_pending;
     } catch (error) { state.error = errorText(error); }
     finally { state.loading = false; render(); }
+  }
+  async function connectResend(event) {
+    event.preventDefault();
+    if (state.busy) return;
+    state.busy = true; state.error = '';
+    const key = state.resendKey;
+    state.resendKey = ''; render();
+    try {
+      await api('/api/admin/mail/resend', { method: 'POST', body: { api_key: key } });
+      state.mailPending = true;
+      toast('Key saved securely. Return to the chat to finish connecting email.');
+    } catch (error) { state.error = errorText(error); }
+    finally { state.busy = false; render(); }
   }
   async function invite(delivery, email = state.email) {
     if (state.busy) return;
@@ -119,6 +132,13 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
       h('h1', null, 'People & invitations'),
       h('p', null, 'Invite friends to try Corpus. Each person gets a private library. You manage invitations and account access.'),
       !state.emailEnabled ? h('p', { class: 'notice' }, 'Automatic email sending is not connected. Create a link and send it from your usual email app.') : null,
+      !state.emailEnabled ? h('section', { class: 'invitation-result' },
+        h('h2', null, 'Connect invitation email'),
+        state.mailPending ? h('p', { role: 'status' }, 'Your Resend key is saved securely. Return to the chat to finish connecting email.') : null,
+        h('form', { class: 'passkey-form', onsubmit: connectResend },
+          field('resend-key', 'RESEND API KEY', 'password', state.resendKey, value => { state.resendKey = value; }, { required: true, autocomplete: 'off', maxlength: 300 }),
+          h('p', { class: 'soft' }, 'Use a Full access key for setup. Your key will not be shown after saving.'),
+          h('button', { class: 'btn', type: 'submit', disabled: state.busy }, state.busy ? 'CONNECTING…' : 'SAVE RESEND KEY'))) : null,
       !state.origin ? h('p', { class: 'notice' }, 'Set the public Corpus address on the server before inviting friends.') : null,
       h('form', { class: 'passkey-form', onsubmit: event => { event.preventDefault(); invite('link'); } },
         field('invitation-email', 'FRIEND’S EMAIL', 'email', state.email, value => { state.email = value; }, { required: true, autocomplete: 'off', maxlength: 254 }),

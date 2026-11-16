@@ -10,6 +10,7 @@ from dataclasses import replace
 from email.message import EmailMessage
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -18,6 +19,9 @@ import sqlite3
 import ssl
 import threading
 import time
+import tempfile
+import urllib.request
+import urllib.error
 import uuid
 
 from fastapi import HTTPException, Request
@@ -163,6 +167,39 @@ class Accounts:
     def email_enabled(self):
         return bool(self.owner.smtp_host and self.owner.smtp_from)
 
+    @property
+    def resend_setup_file(self):
+        return self.owner.data_dir / 'mail-setup' / 'resend-key'
+
+    def save_resend_setup(self, key):
+        if self.email_enabled:
+            raise HTTPException(409, 'Invitation email is already connected')
+        if not isinstance(key, str) or not re.fullmatch(r're_[A-Za-z0-9_-]{10,256}', key.strip()):
+            raise ValueError('Enter a valid Resend API key')
+        key = key.strip()
+        request = urllib.request.Request('https://api.resend.com/domains', headers={
+            'Authorization':'Bearer '+key, 'User-Agent':'Corpus-mail-setup/1.0'})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code == 403:
+                raise ValueError('Use a Full access Resend key so the domain can be connected')
+            raise ValueError('Resend could not validate this key. Check it and try again.')
+        except (OSError, ValueError):
+            raise HTTPException(502, 'Could not reach Resend. Please try again shortly.')
+        folder = self.resend_setup_file.parent
+        folder.mkdir(mode=0o700, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w',dir=folder,delete=False) as output:
+                temporary = Path(output.name)
+                output.write(key+'\n')
+            os.replace(temporary,self.resend_setup_file)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+
     def send_invitation(self, email, url):
         if not self.email_enabled:
             raise HTTPException(503, 'Email sending is not configured. Create a link to send from your email app.')
@@ -278,7 +315,15 @@ def install_routes(app, accounts, limits, hash_password, start_workers):
             invitations = [dict(row) for row in db.execute('''SELECT i.id,u.email,i.expires FROM invitations i JOIN users u ON u.id=i.user_id
                 WHERE i.used IS NULL AND i.revoked=0 AND i.ready=1 AND i.expires>? ORDER BY i.expires DESC''', (time.time(),))]
         return {'users':users, 'invitations':invitations, 'email_enabled':accounts.email_enabled,
+                'mail_setup_pending':accounts.resend_setup_file.is_file(),
                 'public_origin':accounts.owner.public_origin or accounts.owner.passkey_origin}
+
+    @app.post('/api/admin/mail/resend')
+    def connect_resend(request:Request, body:dict):
+        accounts.require_admin(request)
+        limited(request, 'mail-setup', 5)
+        accounts.save_resend_setup(body.get('api_key'))
+        return {'saved':True}
 
     @app.post('/api/admin/invitations')
     def invite(request:Request, body:dict):
