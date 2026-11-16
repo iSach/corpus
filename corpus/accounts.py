@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
 from email.message import EmailMessage
+from pathlib import Path
 import hashlib
 import hmac
 import json
