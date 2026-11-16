@@ -88,6 +88,7 @@
     passkeyLoginError: '',
     passwordLoginBusy: false,
     loginPassword: '',
+    loginEmail: (() => { try { return localStorage.getItem('corpus.loginEmail') || ''; } catch (_) { return ''; } })(),
     inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
     smartLists: [],
     smartListsLoaded: false,
@@ -123,6 +124,8 @@
     onAdded: () => { state.papers = []; state.selectedDetail = null; loadStats(true).then(() => { if (state.stats) state.libraryTotal = state.stats.total; render(); }); },
     openPaper: id => navigate('library', id), openInbox: id => navigate('inbox', id)
   });
+
+  const accounts = window.CorpusAccounts({ h, api, render, toast, session: () => state.session });
 
   function h(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -233,10 +236,10 @@
     let screen = url.searchParams.get('screen') || '';
     if (!screen) {
       const segment = path.split('/').filter(Boolean)[0];
-      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox'].includes(segment) ? segment : 'library';
+      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(segment) ? segment : 'library';
     }
     if (screen === 'paper') screen = 'library';
-    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox'].includes(screen)) screen = 'library';
+    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(screen)) screen = 'library';
     return { screen, paperId: url.searchParams.get('paper') || url.searchParams.get('id') || null,
       captureUrl: screen === 'add' ? url.searchParams.get('url') : null,
       captureTitle: screen === 'add' ? url.searchParams.get('title') : null };
@@ -272,6 +275,7 @@
     else if (route.screen === 'export') scheduleExport();
     else if (route.screen === 'topics') loadTopics();
     else if (route.screen === 'passkeys') loadPasskeys();
+    else if (route.screen === 'admin' || route.screen === 'account') accounts.load();
     else if (route.screen === 'inbox') { if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
     render();
   }
@@ -664,15 +668,15 @@
   }
 
   function finishSignIn() {
-    state.session = { authenticated: true };
-    state.loginPassword = '';
-    state.passkeyLoginBusy = false;
-    state.passkeyLoginError = '';
-    state.booting = false;
-    state.smartListsLoaded = false;
-    loadSmartLists();
-    loadStats();
-    activateRoute(routeFromLocation());
+    try { localStorage.setItem('corpus.loginEmail', state.loginEmail); } catch (_) {}
+    window.location.reload();
+  }
+  async function refreshLoginAccount() {
+    try {
+      const config = await api('/api/config?email=' + encodeURIComponent(state.loginEmail));
+      state.config.passkeys = config.passkeys;
+      render();
+    } catch (_) {}
   }
   function cancelPasskeyLogin() {
     if (passkeyAbort) passkeyAbort.abort();
@@ -689,10 +693,10 @@
     state.passkeyLoginError = '';
     render();
     try {
-      const data = await api('/api/passkeys/authenticate/options', { method: 'POST', signal: controller.signal });
+      const data = await api('/api/passkeys/authenticate/options?email=' + encodeURIComponent(state.loginEmail), { method: 'POST', signal: controller.signal });
       const credential = await window.CorpusPasskeys.authenticate(data.options, controller.signal);
       if (controller.signal.aborted) return;
-      await api('/api/passkeys/authenticate/verify', { method: 'POST', body: { challenge_id: data.challenge_id, credential }, signal: controller.signal });
+      await api('/api/passkeys/authenticate/verify?email=' + encodeURIComponent(state.loginEmail), { method: 'POST', body: { challenge_id: data.challenge_id, credential }, signal: controller.signal });
       if (!controller.signal.aborted) finishSignIn();
     } catch (error) {
       if (!controller.signal.aborted) state.passkeyLoginError = error.name === 'NotAllowedError' ? 'Passkey sign-in was canceled. Try again or use your password.' : getError(error);
@@ -709,7 +713,7 @@
     state.passwordLoginBusy = true;
     render();
     try {
-      await api('/api/login', { method: 'POST', body: { password: state.loginPassword } });
+      await api('/api/login', { method: 'POST', body: { email: state.loginEmail, password: state.loginPassword } });
       finishSignIn();
     } catch (error) { toast(getError(error), true); }
     finally { state.passwordLoginBusy = false; render(); }
@@ -1174,7 +1178,7 @@
       ariaLabel: screen === 'inbox' ? 'Inbox' : null,
       onclick: event => { event.preventDefault(); navigate(screen); }
     }, screen[0].toUpperCase() + screen.slice(1), screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null)));
-    const actions = state.config.auth_required ? [h('button', { class: 'header-action', type: 'button', onclick: () => navigate('passkeys') }, 'PASSKEYS'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
+    const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'PEOPLE') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: () => navigate('passkeys') }, 'PASSKEYS'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
       h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
       nav,
@@ -1757,6 +1761,8 @@
   }
 
   function renderScreen() {
+    if (state.screen === 'admin') return accounts.renderAdmin();
+    if (state.screen === 'account') return accounts.renderAccount();
     if (state.screen === 'stats') return renderStats();
     if (state.screen === 'add') return renderAdd();
     if (state.screen === 'export') return renderExport();
@@ -1770,6 +1776,7 @@
     const paletteHadFocus = Boolean(restore.focus && restore.focus.key === 'palette-input');
     document.querySelectorAll('.palette-backdrop').forEach(node => node.remove());
     if (state.booting) { clear(root); root.appendChild(h('div', { class: 'loading-state' }, 'Loading Corpus…')); return; }
+    if (accounts.hasInvitation()) { clear(root); root.appendChild(accounts.renderInvitation()); restoreRenderState(restore); return; }
     if (state.config.auth_required && (!state.session || !state.session.authenticated)) { renderGate(); return; }
     clear(root);
     root.appendChild(renderHeader());
@@ -1794,6 +1801,7 @@
     ) : null;
     const form = h('form', { class: 'gate-form', onsubmit: event => { event.preventDefault(); signInWithPassword(); } },
       h('div', { class: 'gate-brand' }, 'Corpus'), h('div', { class: 'gate-copy' }, 'Sign in to your research library.'), passkey,
+      h('label', { for: 'login-email' }, 'EMAIL'), h('input', { class: 'input', id: 'login-email', type: 'email', autocomplete: 'username', value: state.loginEmail, placeholder: 'Leave blank for the administrator', oninput: event => { state.loginEmail = event.target.value; }, onchange: refreshLoginAccount }),
       h('label', { for: 'password' }, 'PASSWORD'), h('input', { class: 'input', id: 'password', type: 'password', autocomplete: 'current-password', value: state.loginPassword, required: true, oninput: event => { state.loginPassword = event.target.value; } }),
       h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.passwordLoginBusy }, 'ENTER')
     );
@@ -1803,10 +1811,16 @@
   async function logout() {
     autoPasskeyAttempted = true;
     cancelPasskeyLogin();
-    try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
-    state.session = { authenticated: false };
-    state.passkeySettings.password = '';
-    render();
+    try {
+      await api('/api/logout', { method: 'POST' });
+      state.session = { authenticated: false };
+      state.papers = []; state.selectedDetail = null; state.selectedId = null;
+      state.stats = null; state.topics = []; state.smartLists = [];
+      state.form = null; state.sql.result = null; state.export.preview = '';
+      state.inbox.papers = []; state.inbox.detail = null;
+      state.passkeySettings.password = ''; state.passkeySettings.keys = [];
+      render();
+    } catch (error) { toast(getError(error), true); }
   }
 
   function moveSelection(delta) {
@@ -1850,9 +1864,10 @@
     state.screen = route.screen;
     state.routePaperId = route.paperId;
     try {
-      const [config, session] = await Promise.all([api('/api/config'), api('/api/session')]);
+      const [config, session] = await Promise.all([api('/api/config?email=' + encodeURIComponent(state.loginEmail)), api('/api/session')]);
       state.config = { fields: Array.isArray(config && config.fields) ? config.fields : [], auth_required: Boolean(config && config.auth_required), passkeys: config.passkeys || { enabled: false, registered: false } };
       state.session = session || { authenticated: !state.config.auth_required };
+      if (accounts.hasInvitation()) { await accounts.inspect(); state.booting = false; render(); return; }
       state.booting = false;
       render();
       if (state.config.auth_required && !state.session.authenticated) { tryDefaultPasskey(); return; }

@@ -53,14 +53,14 @@ pull() {
   local name size sum tmp got failed=0 fetched=0
   local -A sums
   for name size sum in ${=listing}; do
-    if [[ $name != corpus-<->T<->Z.sqlite3 ]] || (( ${#sum} != 64 )); then
+    if [[ $name != corpus-<->T<->Z.(sqlite3|tar.gz) ]] || (( ${#sum} != 64 )); then
       log "ignored unexpected listing entry: $name"; failed=1; continue
     fi
     sums[$name]=$sum
   done
 
   # Fetch only what would survive pruning, so pruned snapshots are not fetched again.
-  local -a have=("$DEST"/corpus-<->T<->Z.sqlite3(N:t)) union keepers
+  local -a have=("$DEST"/corpus-<->T<->Z.(sqlite3|tar.gz)(N:t)) union keepers
   union=($have ${(k)sums}); union=(${(ou)union})
   local first=$(( ${#union} > KEEP ? ${#union} - KEEP + 1 : 1 ))
   keepers=(${union[first,-1]})
@@ -75,7 +75,7 @@ pull() {
     fi
   done
 
-  local -a files=("$DEST"/corpus-<->T<->Z.sqlite3(N))   # sorted by name, oldest first
+  local -a files=("$DEST"/corpus-<->T<->Z.(sqlite3|tar.gz)(N))   # sorted by name, oldest first
   local pruned=0
   if (( ${#files} > KEEP )); then
     pruned=$(( ${#files} - KEEP ))

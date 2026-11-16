@@ -1,4 +1,4 @@
-"""Single-owner WebAuthn ceremonies with one-use, browser-bound challenges."""
+"""Per-library WebAuthn ceremonies with one-use, browser-bound challenges."""
 from dataclasses import dataclass
 import hmac
 import json
@@ -35,6 +35,7 @@ class Ceremony:
     session: str
     expires: float
     name: str = ''
+    library: str = ''
 
 
 class Passkeys:
@@ -72,7 +73,7 @@ class Passkeys:
             self.pending[ceremony_id] = Ceremony(
                 kind, options.challenge, browser,
                 request.cookies.get('corpus_session', '') if kind == 'registration' else '',
-                now + CHALLENGE_TTL, name,
+                now + CHALLENGE_TTL, name, str(self.settings.database),
             )
         response = JSONResponse({'challenge_id':ceremony_id, 'options':json.loads(options_to_json(options))})
         response.set_cookie(COOKIE, browser, httponly=True, secure=self.settings.secure_cookie, samesite='strict', max_age=CHALLENGE_TTL)
@@ -84,7 +85,7 @@ class Passkeys:
             raise HTTPException(400, 'Invalid passkey request')
         with self.lock:
             ceremony = self.pending.pop(ceremony_id, None)
-        if (not ceremony or ceremony.expires <= time.monotonic() or ceremony.kind != kind
+        if (not ceremony or ceremony.library != str(self.settings.database) or ceremony.expires <= time.monotonic() or ceremony.kind != kind
                 or not hmac.compare_digest(ceremony.browser.encode(), request.cookies.get(COOKIE, '').encode())
                 or (kind == 'registration' and not hmac.compare_digest(ceremony.session.encode(), request.cookies.get('corpus_session', '').encode()))):
             raise HTTPException(400, 'Passkey request expired or belongs to another browser; try again')
@@ -113,7 +114,7 @@ class Passkeys:
             raise HTTPException(400, 'Remove an unused passkey before adding another')
         options = generate_registration_options(
             rp_id=self.settings.passkey_rp_id, rp_name='Corpus',
-            user_id=user_handle, user_name='Corpus owner', user_display_name='Corpus',
+            user_id=user_handle, user_name='Corpus account', user_display_name='Corpus',
             exclude_credentials=[PublicKeyCredentialDescriptor(id=row['credential_id']) for row in existing],
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.REQUIRED,

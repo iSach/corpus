@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import Settings, ROOT
+from .accounts import Accounts, install_routes as install_account_routes
 from .db import connection, initialize, validate_paper, find_duplicate, duplicate_candidates, add_run, write_paper, get_paper, search, readonly_sql
 from .query import QueryError, compile_query
 from .exporting import export_papers
@@ -60,31 +61,55 @@ class Limiter:
         return True
 
 def create_app(settings=None):
-    settings=settings or Settings()
-    sessions={}; limits=Limiter()
+    owner_settings=settings or Settings()
+    accounts=Accounts(owner_settings)
+    settings=accounts.settings
+    limits=Limiter()
     passkeys=Passkeys(settings)
+    tasks={}
+    worker_stop=None
+    worker_loop=None
+    def start_workers(user_id):
+        # Workers belong to the application's lifespan, including when ASGI
+        # clients dispatch requests from a different event loop.
+        if asyncio.get_running_loop() is not worker_loop:
+            worker_loop.call_soon_threadsafe(start_workers,user_id)
+            return
+        if not owner_settings.pdf_jobs or user_id in tasks: return
+        concrete=accounts.library(user_id)
+        tasks[user_id]=[asyncio.create_task(worker(concrete,worker_stop))]
+        if concrete.venue_checks: tasks[user_id].append(asyncio.create_task(venue_worker(concrete,worker_stop)))
     @asynccontextmanager
     async def lifespan(app):
-        initialize(settings); setup_auth(settings)
-        with connection(settings) as db: prepare_pending(db)
-        passkeys.initialize()
-        stop=asyncio.Event()
-        # pdf_jobs gates every background worker, so tests stay off the network.
-        tasks=[asyncio.create_task(worker(settings,stop))] if settings.pdf_jobs else []
-        if settings.pdf_jobs and settings.venue_checks: tasks.append(asyncio.create_task(venue_worker(settings,stop)))
-        yield
-        stop.set()
-        for task in tasks: await task
+        nonlocal worker_stop,worker_loop
+        worker_loop=asyncio.get_running_loop()
+        initialize(owner_settings); setup_auth(owner_settings)
+        accounts.initialize()
+        worker_stop=asyncio.Event()
+        with accounts.registry() as registry:
+            members=[dict(r) for r in registry.execute("SELECT id,status FROM users WHERE status!='invited'")]
+        for member in members:
+            user_id=member['id']
+            concrete=accounts.library(user_id)
+            initialize(concrete)
+            with connection(concrete) as db: prepare_pending(db)
+            scope=settings.current.set(concrete)
+            try: passkeys.initialize()
+            finally: settings.current.reset(scope)
+            if member['status']=='active': start_workers(user_id)
+        try:
+            yield
+        finally:
+            worker_stop.set()
+            for group in tasks.values():
+                for task in group: await task
+            tasks.clear()
     app=FastAPI(title='Corpus',docs_url=None,redoc_url=None,openapi_url=None,lifespan=lifespan)
-    app.state.settings=settings
+    app.state.settings=owner_settings
+    app.state.accounts=accounts
     app.state.passkeys=passkeys
     def authenticated(request):
-        if settings.dev: return True
-        token=request.cookies.get('corpus_session','')
-        expiry=sessions.get(token,0)
-        if expiry<time.time():
-            sessions.pop(token,None); return False
-        return True
+        return accounts.session_user(request) is not None
     @app.middleware('http')
     async def gate(request,call_next):
         path=request.url.path
@@ -101,11 +126,11 @@ def create_app(settings=None):
                 if size>2_000_000: return JSONResponse({'detail':'Request exceeds 2 MB'},status_code=413)
                 chunks.append(chunk)
             request._body=b''.join(chunks)
-        public=path in ('/api/session','/api/login','/api/config','/api/passkeys/authenticate/options','/api/passkeys/authenticate/verify')
+        public=path in ('/api/session','/api/login','/api/config','/api/passkeys/authenticate/options','/api/passkeys/authenticate/verify','/api/invitations/inspect','/api/invitations/accept')
         agent_route = path=='/api/ingest' or (path in ('/api/review/work','/api/review/text','/api/review/assessments') and bool(request.headers.get('authorization')))
         if agent_route:
             supplied=request.headers.get('authorization','')
-            if not hmac.compare_digest(supplied,'Bearer '+settings.ingest_token): return JSONResponse({'detail':'A valid ingest Bearer token is required'},status_code=401)
+            if not hmac.compare_digest(supplied,'Bearer '+owner_settings.ingest_token): return JSONResponse({'detail':'A valid ingest Bearer token is required'},status_code=401)
         elif path.startswith('/api/') and not public and not authenticated(request):
             return JSONResponse({'detail':'Sign in to Corpus'},status_code=401)
         if request.method not in ('GET','HEAD','OPTIONS') and not agent_route:
@@ -118,6 +143,30 @@ def create_app(settings=None):
         response.headers['X-Frame-Options']='DENY'
         if path.startswith('/api/'): response.headers['Cache-Control']='no-store'
         return response
+    @app.middleware('http')
+    async def library_scope(request,call_next):
+        path=request.url.path
+        user=accounts.session_user(request)
+        agent_route=path=='/api/ingest' or (path in ('/api/review/work','/api/review/text','/api/review/assessments') and bool(request.headers.get('authorization')))
+        user_id=user['id'] if user and not agent_route else 'owner'
+        if path=='/api/config' and not user and request.query_params.get('email'):
+            selected=accounts.by_email(request.query_params['email'])
+            if selected and selected['status']=='active': user_id=selected['id']
+        if path in ('/api/passkeys/authenticate/options','/api/passkeys/authenticate/verify'):
+            ip=request.client.host if request.client else 'unknown'
+            if not limits.allow('passkey-select:'+ip,30,300):
+                return JSONResponse({'detail':'Too many attempts; try again in five minutes'},status_code=429)
+            selected=accounts.by_email(request.query_params.get('email',''))
+            if not selected or selected['status']!='active':
+                return JSONResponse({'detail':'Passkey sign-in is unavailable. Check your email or use your password.'},status_code=400)
+            user_id=selected['id']
+        scope=settings.current.set(accounts.library(user_id))
+        identity=accounts.user_id.set(user_id)
+        try:
+            return await call_next(request)
+        finally:
+            accounts.user_id.reset(identity)
+            settings.current.reset(scope)
     @app.exception_handler(QueryError)
     async def query_error(request,e): return JSONResponse({'detail':{'message':e.message,'position':e.position}},status_code=400)
     @app.exception_handler(ValueError)
@@ -126,7 +175,7 @@ def create_app(settings=None):
     async def database_error(request,e): return JSONResponse({'detail':str(e)},status_code=400)
     @app.get('/api/config')
     def config(request:Request):
-        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')]
+        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')] if authenticated(request) else []
         return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request)}
     @app.get('/api/topics')
     def topics():
@@ -135,25 +184,28 @@ def create_app(settings=None):
     def update_topic(body:dict):
         with connection(settings) as db: return {'topic':save_topic(db,body)}
     @app.get('/api/session')
-    def session(request:Request): return {'authenticated':authenticated(request)}
+    def session(request:Request):
+        user=accounts.session_user(request)
+        return {'authenticated':True,'user':user} if user else {'authenticated':False}
     def check_password(request,password):
         ip=request.client.host if request.client else 'unknown'
         if not limits.allow('login:'+ip,10,300): raise HTTPException(429,'Too many login attempts; try again in five minutes')
         if not isinstance(password,str) or len(password)>1000: raise HTTPException(400,'Invalid password')
         with connection(settings,True) as db: r=db.execute('SELECT * FROM credential WHERE id=1').fetchone()
         if not hmac.compare_digest(hash_password(password,r['salt']),r['password_hash']): raise HTTPException(401,'Incorrect password')
-    def issue_session():
-        token=secrets.token_urlsafe(32)
-        for k in list(sessions):
-            if sessions[k]<time.time(): del sessions[k]
-        sessions[token]=time.time()+86400*7
-        response=JSONResponse({'authenticated':True})
-        response.set_cookie('corpus_session',token,httponly=True,secure=settings.secure_cookie,samesite='strict',max_age=86400*7)
-        return response
+    issue_session=accounts.issue_session
     @app.post('/api/login')
     def login(request:Request,body:dict):
-        check_password(request,body.get('password',''))
-        return issue_session()
+        selected=accounts.by_email(body.get('email',''))
+        concrete=accounts.library(selected['id']) if selected and selected['status']=='active' else owner_settings
+        scope=settings.current.set(concrete)
+        try:
+            check_password(request,body.get('password',''))
+        finally:
+            settings.current.reset(scope)
+        if not selected or selected['status']!='active': raise HTTPException(401,'Incorrect password')
+        return issue_session(selected['id'])
+    install_account_routes(app,accounts,limits,hash_password,start_workers)
     install_passkey_routes(app,passkeys,limits,check_password,issue_session)
     install_inbox_routes(app,settings)
     install_review_routes(app,settings)
@@ -161,7 +213,7 @@ def create_app(settings=None):
     install_venue_routes(app,settings,limits)
     @app.post('/api/logout')
     def logout(request:Request):
-        sessions.pop(request.cookies.get('corpus_session',''),None)
+        with accounts.session_lock: accounts.sessions.pop(request.cookies.get('corpus_session',''),None)
         r=JSONResponse({'authenticated':False}); r.delete_cookie('corpus_session'); return r
     @app.get('/api/papers')
     def papers(q:str='',facets:str='{}',limit:int=100,offset:int=0):

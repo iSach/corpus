@@ -7,7 +7,7 @@ User=corpus
 Group=corpus
 UMask=0077
 # A standalone copy of corpus/backup.py, so backups keep running whatever is deployed in /opt/corpus.
-ExecStart=/usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/nightly --keep 14 --group-readable
+ExecStart=/usr/bin/python3 -I /usr/local/lib/corpus-backup/backup.py --database /var/lib/corpus/data/corpus.sqlite3 --dest /var/backups/corpus/nightly --keep 14 --group-readable --all-accounts
 Nice=10
 NoNewPrivileges=true
 PrivateTmp=true

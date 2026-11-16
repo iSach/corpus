@@ -592,3 +592,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .symbol-choice:hover .symbol-tile { border-color: var(--accent-dark); }
 .symbol-choice-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .inbox-item-meta .project-name { margin-right: 0; }
+
+/* Account administration follows the existing compact settings panels. */
+.admin-panel h2 { margin: 22px 0 8px; font: 600 18px var(--display); }
+.account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.invitation-result { padding: 14px; margin: 16px 0; border: 1px solid var(--line); background: var(--surface-2); }
+.invitation-result .input { width: 100%; }
+@media (max-width: 600px) { .account-row { align-items: flex-start; flex-direction: column; gap: 4px; } }
