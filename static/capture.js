@@ -183,8 +183,8 @@
       return `javascript:(()=>{const u=new URL(${JSON.stringify(window.location.origin)});u.searchParams.set('screen','add');u.searchParams.set('url',location.href);u.searchParams.set('title',document.title);window.open(u.href,'corpus-capture','width=1100,height=780');})()`;
     }
     function projectsRail() {
-      return h('aside', { class: 'facet-rail capture-projects', ariaLabel: 'Projects to add papers to' },
-        h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, 'ADD TO PROJECTS'),
+      return h('aside', { class: 'facet-rail capture-projects', ariaLabel: 'Topics to add papers to' },
+        h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, 'ADD TO TOPICS'),
           ...fields().map(field => h('label', { class: 'facet-option' }, h('input', { type: 'checkbox', checked: c.projects.includes(field.id), onchange: event => project(field.id, event.target.checked) }), h('span', { class: 'facet-label' }, projectSymbol(field.symbol), field.label))),
           h('p', { class: 'capture-hint' }, 'Your choices stay selected for the next paper.')),
         h('section', { class: 'facet-section' }, h('label', { class: 'facet-title', for: 'capture-search-in' }, 'SEARCH IN'), h('select', { id: 'capture-search-in', class: 'select', value: c.searchIn, onchange: event => { c.searchIn = event.target.value; if (c.query) search(); } },
@@ -231,13 +231,13 @@
       const query = h('form', { class: 'query-toolbar', onsubmit: event => { event.preventDefault(); search(); } },
         h('div', { class: 'query-wrap' }, h('span', { class: 'query-prompt', ariaHidden: true }, '>'),
           h('input', { id: 'capture-query', class: 'query-input', type: 'search', value: c.query, placeholder: 'Title, author, DOI, or paper link…', ariaLabel: 'Find papers', maxlength: 3000, oninput: event => schedule(event.target.value) })),
-        h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', 'aria-expanded': String(c.projectsOpen), onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `PROJECTS (${c.projects.length})`),
+        h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', 'aria-expanded': String(c.projectsOpen), onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `TOPICS (${c.projects.length})`),
         h('button', { class: 'toolbar-button', type: 'submit' }, 'SEARCH'));
       const links = c.mode === 'links' ? h('section', { class: 'capture-links' }, h('label', { class: 'panel-title', for: 'capture-links' }, 'PAPER LINKS · ONE PER LINE'),
         h('textarea', { id: 'capture-links', class: 'input', rows: 5, value: c.input, placeholder: 'https://arxiv.org/abs/…\nhttps://doi.org/…', oninput: event => { c.input = event.target.value; } }),
         h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', disabled: loading(), onclick: resolveLinks }, loading() ? 'LOOKING UP…' : 'FIND PAPERS'), h('span', { class: 'capture-hint' }, 'Up to 30 links. Review the matches, then add them together.'))) : null;
       const status = Object.entries(c.states).map(([name, value]) => `${name === 'arxiv' ? 'arXiv' : name === 'crossref' ? 'Crossref' : name === 'library' ? 'Saved' : 'Links'} ${value === 'loading' ? 'searching…' : value === 'unavailable' ? 'unavailable' : 'ready'}`).join(' · ');
-      const toolbar = c.mode === 'search' ? query : h('div', { class: 'query-toolbar' }, h('div', { class: 'query-wrap capture-hint' }, 'Paste links from your paper tabs'), h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `PROJECTS (${c.projects.length})`));
+      const toolbar = c.mode === 'search' ? query : h('div', { class: 'query-toolbar' }, h('div', { class: 'query-wrap capture-hint' }, 'Paste links from your paper tabs'), h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `TOPICS (${c.projects.length})`));
       return h('main', { class: `screen capture-screen${c.projectsOpen ? ' projects-open' : ''}`, onkeydown: event => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); const target = c.items.find(item => item.key === c.focused); add(selected.length ? selected : target && eligible(target) && !alreadyFiled(target) ? [target] : []); }
         if (event.key === 'Escape' && c.projectsOpen) { c.projectsOpen = false; render(); }
@@ -245,14 +245,14 @@
         h('div', { class: 'capture-layout' }, projectsRail(), h('section', { class: 'table-region capture-results' }, links,
           h('div', { class: 'table-head capture-list-head' }, h('span', null, `${c.items.length} RESULTS`), h('span', { role: 'status' }, status)),
           h('div', { class: 'capture-result-list', 'data-scroll-key': 'capture-results' }, ...rows,
-            !rows.length ? h('div', { class: 'empty' }, loading() ? 'Finding papers…' : c.mode === 'links' ? 'Paste paper links above, then choose Find papers.' : c.query ? 'No matches found. Try fewer title words or an author name.' : 'Search by title or author. Choose projects, then add a paper in one click.') : null,
+            !rows.length ? h('div', { class: 'empty' }, loading() ? 'Finding papers…' : c.mode === 'links' ? 'Paste paper links above, then choose Find papers.' : c.query ? 'No matches found. Try fewer title words or an author name.' : 'Search by title or author. Choose topics, then add a paper in one click.') : null,
             ...c.errors.map(error => h('div', { class: 'notice error-text', role: 'alert' }, error)),
             Object.values(c.states).includes('unavailable') ? h('div', { class: 'capture-retry' }, h('span', { class: 'capture-hint' }, 'One source could not respond. Other results remain available. '), h('button', { class: 'btn', type: 'button', onclick: () => search() }, 'RETRY SEARCH')) : null),
           h('footer', { class: 'capture-actionbar' }, h('div', { class: 'detail-actions' },
             h('button', { class: 'btn btn-primary', type: 'button', title: 'Ctrl/⌘ + Enter', disabled: c.busy || !c.projects.length || !selected.length, onclick: () => add(selected) }, c.busy ? 'ADDING…' : `ADD SELECTED (${selected.length})`),
             h('button', { class: 'btn', type: 'button', disabled: !rows.length || c.busy, onclick: () => { c.items.filter(item => eligible(item) && !alreadyFiled(item)).forEach(item => c.selected.add(item.key)); render(); } }, 'SELECT ALL'),
             c.more && c.mode === 'search' ? h('button', { class: 'btn', type: 'button', disabled: loading(), onclick: () => search(true) }, 'MORE RESULTS') : null),
-            h('div', { class: 'capture-hint' }, c.projects.length ? `Add to: ${c.projects.map(label).join(' · ')}` : 'Choose at least one project.'))), preview()));
+            h('div', { class: 'capture-hint' }, c.projects.length ? `Add to: ${c.projects.map(label).join(' · ')}` : 'Choose at least one topic.'))), preview()));
     }
     return { state: c, activate, cancel, render: view, tabs, setProjects, projects: () => { initialize(); return c.projects; } };
   };

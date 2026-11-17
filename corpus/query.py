@@ -158,7 +158,7 @@ def compile_query(source='', facets=None):
             if name not in SORTS: raise QueryError('Unknown sort column: ' + name, n.pos)
             if sorts: raise QueryError('Use only one sort directive', n.pos)
             sorts.append(value); return '1'
-        if key in ('field','project'):
+        if key in ('field','project','topic'):
             return 'EXISTS (SELECT 1 FROM paper_projects pp WHERE pp.paper_id=p.id AND pp.field_id='+bound(value)+' COLLATE NOCASE)'
         if key in ('venue','state'):
             if key == 'state' and value not in ('unreviewed','reviewed','archived'):

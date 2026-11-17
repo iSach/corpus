@@ -74,7 +74,7 @@ For individual tabs, drag **SAVE TO CORPUS** from the project rail onto your bro
 
 **Manual entry** retains the detailed metadata, notes, scores, and artifact editor. Existing paper edits also support multiple project checkboxes. On phones, **PROJECTS** opens the project selector and tapping a result reveals its abstract.
 
-Projects use the existing topic IDs. `papers.field` remains the primary topic for compatibility and topic-specific assessments; `paper_projects` records all memberships. Both `field:` and `project:` search all memberships, and project filters, statistics, JSON/CSV/BibTeX exports include secondary projects without duplicating a paper in the library total.
+Projects use the existing topic IDs. `papers.field` remains the primary topic for compatibility and topic-specific assessments; `paper_projects` records all memberships. `topic:` (and the older `field:` and `project:`) searches all memberships, and project filters, statistics, JSON/CSV/BibTeX exports include secondary projects without duplicating a paper in the library total.
 
 The repository includes an example **Uncertainty calibration** topic that shows the shape of a research brief and its relevance criteria. It is in [topics/uncertainty-calibration.json](topics/uncertainty-calibration.json); copy it as a starting point for your own topics. Add or update a topic file in the configured library with:
 
@@ -187,6 +187,8 @@ Many papers enter the library as arXiv preprints and are published at a conferen
 - **Proposed** otherwise, and always for workshops. The detail pane's **PUBLISHED VERSION** section shows what was found and which sources said so, with **APPLY** and **NOT THIS** buttons. A dismissed answer is never proposed again. Find waiting proposals with `is:venue-proposed`.
 - **Never overridden**: if you edit a paper's venue, venue class or year, it is no longer checked.
 
+**Export** lists every paper in the topics you tick, all included by default. Untick a paper to leave it out of exports while keeping it in the library; the topics, exclusions and options are saved with your library, so they follow you to other devices. The *Minimal* preset writes only author, title, venue and year, which suits most conference templates; *Standard* adds a link, DOI and arXiv eprint; *Full* also keeps topics, tags, your scores, notes and code links. Style options choose the link (none, arXiv, published version, or best available), short `authorYEARword` citation keys, short venue names (NeurIPS, ICML…), a maximum number of authors, braces that keep acronyms capitalized in titles, LaTeX accents for classic BibTeX, and `@article` or `@misc` for preprints.
+
 BibTeX exports cite the published venue as `@inproceedings` or `@article` and keep `eprint`/`archiveprefix` for the arXiv version. Preprints export as `journal = {arXiv preprint arXiv:…}`. To check every due paper once from a shell, using the server's environment:
 
 ```sh
@@ -209,7 +211,7 @@ The browser uses these routes:
 - `POST /api/metadata` fetches DOI or arXiv metadata; it accepts an identifier or source URL containing one of those identifiers.
 - `GET /api/catalog/search?q=...&source=library|crossref|arxiv&mode=all|title|author&offset=0` searches saved papers or a public catalog. `POST /api/catalog/resolve` accepts `{ "identifiers": [...] }` and returns per-link metadata or errors. `POST /api/capture` takes `{ "projects": [...], "papers": [...], "query": ... }` and adds or files up to 50 selected papers per request. These routes require a browser session; the ingest token cannot use manual capture.
 - `GET /api/topics` lists topics, research descriptions, and relevance criteria; `POST /api/topics` creates or updates `{ "id": ..., "label": ..., "description": ..., "relevance_criteria": ..., "symbol": ... }`, where `symbol` is one of `triangle`, `circle`, `square`, `diamond`, `star`, `cross`, `hexagon`, `pentagon`, or empty. Both routes require a session. Descriptions and criteria are omitted from the public configuration response.
-- `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
+- `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/export` takes `scope` (`query`, `all` or `selection` with `ids`), `format`, `sort` (`query`, `author`, `year`, `added`, `key`, `title`), `include` (`doi`, `eprint`, `keywords`, `scores`, `notes`, `code`, `local_paths`) and, for BibTeX, `bibtex`: `url` (`canonical`, `none`, `arxiv`, `published`, `best`), `keys` (`stored`, `short`), `venue` (`full`, `short`), `authors` (0 for all, or a maximum before “and others”), `protect` (`none`, `smart`, `all`), `accents` (`unicode`, `latex`) and `preprints` (`article`, `misc`). Omitted options keep the original output. `GET /api/export/papers`, `PUT /api/export/settings` and `POST /api/export/exclusions` back the Export page. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
 - `POST /api/sql` runs a bounded read-only query. SQLite is opened in read-only mode with `query_only`, an authorizer, a 150 ms progress timeout, and a 1,000-row cap. `CORPUS_SQL_LOCAL_ONLY=1` adds a loopback client check.
 - `POST /api/ingest` is the agent-facing endpoint and is authenticated with the Bearer token described in [INGEST.md](INGEST.md).
   The included [scheduled paper watch](docs/paper-watch.md) discovers arXiv matches for your GitHub-configured topics and sends them there.
@@ -221,7 +223,7 @@ The production systemd and nginx templates are [docs/corpus.service](docs/corpus
 The query bar accepts bare terms and these filters:
 
 ```text
-field:thesis        tag:to-read           venue:ICML  author:Raymond
+topic:thesis        tag:to-read           venue:ICML  author:Raymond
 year:2025           rel:>7                state:unreviewed
 has:code            has:pdf              has:cached
 is:starred          is:venue-proposed     pdf:"posterior collapse"

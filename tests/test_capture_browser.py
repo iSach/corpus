@@ -32,7 +32,7 @@ def query(page,text='physical regimes'):
 def test_search_adds_once_to_multiple_projects_and_remembers_choices(page,site):
     mock_search(page)
     query(page)
-    projects=page.get_by_role('complementary',name='Projects to add papers to')
+    projects=page.get_by_role('complementary',name='Topics to add papers to')
     projects.get_by_role('checkbox',name='Diffusion composition',exact=True).check()
     page.get_by_role('button',name='Add '+found()['title'],exact=True).click()
     expect(page.get_by_role('button',name='Already filed '+found()['title'],exact=True)).to_be_disabled()
@@ -43,7 +43,7 @@ def test_search_adds_once_to_multiple_projects_and_remembers_choices(page,site):
     expect(page.locator('.capture-preview').get_by_text(found()['abstract'],exact=True)).to_be_visible()
     assert page.locator('.capture-preview script').count()==0
     page.reload()
-    expect(page.get_by_role('complementary',name='Projects to add papers to').get_by_role('checkbox',name='Diffusion composition',exact=True)).to_be_checked()
+    expect(page.get_by_role('complementary',name='Topics to add papers to').get_by_role('checkbox',name='Diffusion composition',exact=True)).to_be_checked()
 
 
 def test_bulk_paste_deduplicates_links_and_shows_failed_lookups(page,site):
@@ -76,9 +76,9 @@ def test_mobile_project_picker_and_inline_abstract(page,site):
     mock_search(page)
     page.set_viewport_size({'width':390,'height':844})
     query(page)
-    page.get_by_role('button',name='PROJECTS (1)',exact=True).click()
-    page.get_by_role('complementary',name='Projects to add papers to').get_by_role('checkbox',name='Diffusion composition',exact=True).check()
-    page.get_by_role('button',name='PROJECTS (2)',exact=True).click()
+    page.get_by_role('button',name='TOPICS (1)',exact=True).click()
+    page.get_by_role('complementary',name='Topics to add papers to').get_by_role('checkbox',name='Diffusion composition',exact=True).check()
+    page.get_by_role('button',name='TOPICS (2)',exact=True).click()
     page.get_by_role('button',name='Inspect '+found()['title'],exact=True).click()
     expect(page.locator('.capture-mobile-abstract')).to_contain_text('Transfer across physical parameters.')
     assert page.evaluate('document.documentElement.scrollWidth')<=390
@@ -112,7 +112,7 @@ def test_saved_paper_without_identifiers_can_be_filed_without_network(page,site)
     page.route('**/api/catalog/search?*',lambda route:route.continue_() if 'source=library' in route.request.url else route.fulfill(json={'papers':[],'has_more':False}))
     page.get_by_role('button',name='SEARCH',exact=True).click()
     expect(page.locator('.capture-result')).to_have_count(1)
-    picker=page.get_by_role('complementary',name='Projects to add papers to')
+    picker=page.get_by_role('complementary',name='Topics to add papers to')
     picker.get_by_role('checkbox',name='Diffusion composition',exact=True).check()
     page.get_by_role('button',name='Add Alpha scientific posterior',exact=True).click()
     expect(page.get_by_role('button',name='Already filed Alpha scientific posterior',exact=True)).to_be_disabled()

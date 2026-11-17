@@ -110,7 +110,7 @@ def test_abstract_assessment_form_and_mobile_filters(review_page):
     expect(page.locator('.evidence-level')).to_have_text('Abstract only')
     page.set_viewport_size({'width':390,'height':844})
     page.get_by_role('button',name='Toggle discovery filters',exact=True).click()
-    page.get_by_role('combobox',name='Inbox evidence',exact=True).select_option('abstract')
+    page.get_by_role('radiogroup',name='Inbox evidence').get_by_role('radio',name='Abstract only').click()
     expect(page.locator('.inbox-item')).to_have_count(1)
     assert page.evaluate('document.documentElement.scrollWidth')<=390
     page.get_by_role('button',name='APPROVE FROM ABSTRACT',exact=True).click()
@@ -151,8 +151,8 @@ def test_mobile_queue_and_reading_are_separate_views(review_page):
     expect(page.locator('.inbox-paper-title')).to_be_visible()
     expect(page.locator('.inbox-queue')).not_to_be_visible()
     page.get_by_role('button',name='Toggle discovery filters',exact=True).click()
-    expect(page.get_by_role('combobox',name='Inbox evidence',exact=True)).to_be_visible()
-    page.get_by_role('combobox',name='Inbox evidence',exact=True).select_option('abstract')
+    expect(page.get_by_role('radiogroup',name='Inbox evidence')).to_be_visible()
+    page.get_by_role('radiogroup',name='Inbox evidence').get_by_role('radio',name='Abstract only').click()
     expect(page.locator('.inbox-filter-rail')).not_to_be_visible()
     expect(page.locator('.inbox-paper-title')).to_be_visible()
     assert page.evaluate('document.documentElement.scrollWidth')<=390

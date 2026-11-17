@@ -9,7 +9,7 @@ from .config import Settings, ROOT
 from .accounts import Accounts, install_routes as install_account_routes
 from .db import connection, initialize, validate_paper, find_duplicate, duplicate_candidates, add_run, write_paper, get_paper, search, readonly_sql
 from .query import QueryError, compile_query
-from .exporting import export_papers
+from .exporting import export_papers, export_papers_list, get_preferences, save_preferences, set_exclusions
 from .stats import stats
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
@@ -331,6 +331,15 @@ def create_app(settings=None):
     @app.post('/api/export')
     def export(body:dict):
         with connection(settings,True) as db: return export_papers(db,body)
+    @app.get('/api/export/papers')
+    def export_list():
+        with connection(settings,True) as db: return {'papers':export_papers_list(db),**get_preferences(db)}
+    @app.put('/api/export/settings')
+    def export_settings(body:dict):
+        with connection(settings) as db: return save_preferences(db,body.get('settings'))
+    @app.post('/api/export/exclusions')
+    def export_exclusions(body:dict):
+        with connection(settings) as db: return set_exclusions(db,body.get('ids'),body.get('excluded'))
     @app.post('/api/artifacts/{id}/cache')
     @app.post('/api/artifacts/{id}/retry')
     def retry(id:int):
