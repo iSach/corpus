@@ -177,7 +177,8 @@ def validate_paper(db, incoming, existing=None, ingest=False):
     p['artifacts']=[]
     for a in artifacts:
         if not isinstance(a,dict) or a.get('kind') not in KINDS: raise ValueError('Invalid artifact kind')
-        u=url(a.get('url'))
+        # An uploaded PDF has no address; it is named by its content hash.
+        u=a['url'] if a['kind']=='pdf' and isinstance(a.get('url'),str) and re.fullmatch(r'upload:[0-9a-f]{64}',a['url']) else url(a.get('url'))
         if not u: raise ValueError('Artifact URL is required')
         if not any(x['kind']==a['kind'] and x['url']==u for x in p['artifacts']): p['artifacts'].append({'kind':a['kind'],'url':u})
     if not p['artifacts'] and p['arxiv_id'] and 'artifacts' not in incoming:
@@ -213,7 +214,7 @@ def write_paper(db,p,run_id=None,paper_id=None,query='',similarity=0,admission='
     for a in previous:
         if (a['kind'],a['url']) not in wanted: db.execute('DELETE FROM artifacts WHERE id=?',(a['id'],))
     for a in artifacts:
-        db.execute('INSERT OR IGNORE INTO artifacts(paper_id,kind,url,fetch_status) VALUES(?,?,?,?)',(paper_id,a['kind'],a['url'],'pending' if a['kind']=='pdf' and admission=='approved' else 'linked'))
+        db.execute('INSERT OR IGNORE INTO artifacts(paper_id,kind,url,fetch_status) VALUES(?,?,?,?)',(paper_id,a['kind'],a['url'],'pending' if a['kind']=='pdf' and admission=='approved' and not a['url'].startswith('upload:') else 'linked'))
     db.execute('DELETE FROM paper_fts WHERE paper_id=?',(paper_id,))
     db.execute('INSERT INTO paper_fts(paper_id,title,authors,abstract,tags,notes) VALUES(?,?,?,?,?,?)',(paper_id,p['title'],' '.join(p['authors']),p['abstract'],' '.join(tags),p['notes']))
     if admission == 'pending':

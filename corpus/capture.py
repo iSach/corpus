@@ -1,11 +1,13 @@
 """Interactive, additive capture: one paper can be filed in several projects."""
 import json
 import re
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from .db import connection, add_run, validate_paper, write_paper, find_duplicate, get_paper, IDENTIFIERS
 from .catalog import Catalog, CatalogBusy, CatalogQueryError
 from .query import fts_literal
+from . import pdf_import
 
 
 def metadata_from_library(db,paper_id):
@@ -131,6 +133,34 @@ def install_routes(app,settings,limits):
             annotate(db,[row['paper'] for row in results if row.get('paper')])
         return {'results':results}
 
+    def import_pdf_sync(data,name):
+        found=pdf_import.analyze(data,name)
+        with connection(settings) as db:
+            upload=pdf_import.stage(settings,db,data)
+        with connection(settings,True) as db:
+            paper,source,via,notes=pdf_import.identify(settings,db,catalog,found,metadata_from_library,settings.dedupe_threshold)
+        if paper is None:
+            if not found['title']: raise ValueError('No title could be read from this PDF. Add it by hand instead.')
+            paper=pdf_import.from_pdf(found)
+        else:
+            for key in ('abstract','year'):
+                if not paper.get(key) and found.get(key): paper[key]=found[key]
+            if not paper.get('authors') and found['authors']: paper['authors']=found['authors']
+        paper['upload']=upload
+        with connection(settings,True) as db: annotate(db,[paper])
+        return {'paper':paper,'match':{'source':source,'via':via},'notes':notes,'pages':found['pages']}
+
+    @app.post('/api/catalog/pdf')
+    async def import_pdf(request:Request,name:str=''):
+        if not limits.allow('pdf-import',30,60): raise HTTPException(429,'Please pause briefly before importing more PDFs')
+        if len(name)>300: raise ValueError('File name is too long')
+        kind=request.headers.get('content-type','').split(';')[0].strip().lower()
+        if kind not in ('application/pdf','application/octet-stream','application/x-pdf'): raise HTTPException(415,'Upload the PDF file itself')
+        data=await request.body()
+        if not data: raise ValueError('The PDF is empty')
+        if len(data)>settings.pdf_max_bytes: raise HTTPException(413,'PDF exceeds the upload limit')
+        return await run_in_threadpool(import_pdf_sync,data,name)
+
     @app.post('/api/capture')
     def save(body:dict):
         projects=body.get('projects')
@@ -151,6 +181,9 @@ def install_routes(app,settings,limits):
                 db.execute('SAVEPOINT capture_item')
                 try:
                     result=capture_one(db,metadata,projects,run,query,settings.dedupe_threshold)
+                    if isinstance(metadata,dict) and metadata.get('upload') and result.get('paper'):
+                        result['pdf']=pdf_import.attach(settings,db,result['paper']['id'],metadata['upload'])
+                        if result['pdf']=='attached': result['paper']=get_paper(db,result['paper']['id'])
                     db.execute('RELEASE capture_item')
                     results.append({'index':index,**result})
                 except ValueError as error:

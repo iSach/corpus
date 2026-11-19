@@ -422,6 +422,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .capture-preview { min-width: 0; }
 .capture-links { padding: 7px 8px; border-bottom: 1px solid var(--line); }
 .capture-links textarea { display: block; margin-top: 5px; resize: vertical; font: 11px/1.5 var(--mono); }
+.capture-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 82px; padding: 12px; border: 1px dashed var(--accent); background: var(--surface); text-align: center; cursor: pointer; }
+.capture-dropzone:hover, .capture-dropzone:focus-within { background: var(--accent-soft); }
+.capture-match { color: var(--accent-dark); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; inset: 10px; z-index: 1000; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--accent); background: var(--accent-soft); color: var(--accent-dark); font: 13px/1 var(--mono); letter-spacing: .08em; pointer-events: none; }
 .capture-retry { padding: 6px 8px; }
 .capture-mobile-abstract { display: none; }
 .form-projects { display: flex; flex-wrap: wrap; gap: 5px 12px; }

@@ -114,16 +114,19 @@ def create_app(settings=None):
     async def gate(request,call_next):
         path=request.url.path
         length=request.headers.get('content-length')
+        # Only an uploaded PDF may be larger than an ordinary JSON request.
+        limit=owner_settings.pdf_max_bytes if path=='/api/catalog/pdf' else 2_000_000
+        too_large=JSONResponse({'detail':f'Request exceeds {limit//1_000_000} MB'},status_code=413)
         if length:
             try:
-                if int(length)>2_000_000: return JSONResponse({'detail':'Request exceeds 2 MB'},status_code=413)
+                if int(length)>limit: return too_large
             except ValueError: return JSONResponse({'detail':'Invalid Content-Length'},status_code=400)
         # Bound streaming/chunked bodies too, before FastAPI parses JSON.
         if request.method in ('POST','PUT','PATCH'):
             chunks=[]; size=0
             async for chunk in request.stream():
                 size+=len(chunk)
-                if size>2_000_000: return JSONResponse({'detail':'Request exceeds 2 MB'},status_code=413)
+                if size>limit: return too_large
                 chunks.append(chunk)
             request._body=b''.join(chunks)
         public=path in ('/api/session','/api/login','/api/config','/api/passkeys/authenticate/options','/api/passkeys/authenticate/verify','/api/invitations/inspect','/api/invitations/accept')

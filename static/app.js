@@ -217,7 +217,7 @@
 
   async function api(path, options = {}) {
     const opts = { credentials: 'same-origin', ...options, headers: { ...(options.headers || {}) } };
-    if (options.body && typeof options.body !== 'string') {
+    if (options.body && typeof options.body !== 'string' && !(options.body instanceof Blob)) {
       opts.body = JSON.stringify(options.body);
       opts.headers['Content-Type'] = 'application/json';
     }
@@ -1646,7 +1646,7 @@
   }
   function renderArtifactEditor() {
     const rows = state.form.artifacts || [];
-    return h('div', { class: 'form-section' }, h('div', { class: 'form-section-label' }, 'ARTIFACTS'), h('div', { class: 'artifact-editor' }, ...rows.map((artifact, index) => h('div', { class: 'artifact-editor-row' }, h('select', { id: `artifact-${index}-kind`, 'data-focus-key': `artifact-${index}-kind`, class: 'select', value: artifact.kind, ariaLabel: `Artifact ${index + 1} kind`, onchange: event => { artifact.kind = event.target.value; } }, ...ARTIFACT_KINDS.map(kind => h('option', { value: kind, selected: artifact.kind === kind }, kind))), h('input', { id: `artifact-${index}-url`, 'data-focus-key': `artifact-${index}-url`, class: 'input', value: artifact.url || '', placeholder: 'URL', ariaLabel: `Artifact ${index + 1} URL`, oninput: event => { artifact.url = event.target.value; } }), h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Remove artifact', onclick: () => { state.form.artifacts.splice(index, 1); render(); } }, '×'))), h('button', { class: 'btn btn-quiet', type: 'button', onclick: () => { state.form.artifacts.push({ kind: 'pdf', url: '', local_path: '', fetch_status: '' }); render(); } }, '+ ARTIFACT')));
+    return h('div', { class: 'form-section' }, h('div', { class: 'form-section-label' }, 'ARTIFACTS'), h('div', { class: 'artifact-editor' }, ...rows.map((artifact, index) => h('div', { class: 'artifact-editor-row' }, h('select', { id: `artifact-${index}-kind`, 'data-focus-key': `artifact-${index}-kind`, class: 'select', value: artifact.kind, ariaLabel: `Artifact ${index + 1} kind`, onchange: event => { artifact.kind = event.target.value; } }, ...ARTIFACT_KINDS.map(kind => h('option', { value: kind, selected: artifact.kind === kind }, kind))), /^upload:/.test(artifact.url || '') ? h('input', { id: `artifact-${index}-url`, class: 'input', value: 'Imported PDF file', readonly: true, ariaLabel: `Artifact ${index + 1} URL` }) : h('input', { id: `artifact-${index}-url`, 'data-focus-key': `artifact-${index}-url`, class: 'input', value: artifact.url || '', placeholder: 'URL', ariaLabel: `Artifact ${index + 1} URL`, oninput: event => { artifact.url = event.target.value; } }), h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Remove artifact', onclick: () => { state.form.artifacts.splice(index, 1); render(); } }, '×'))), h('button', { class: 'btn btn-quiet', type: 'button', onclick: () => { state.form.artifacts.push({ kind: 'pdf', url: '', local_path: '', fetch_status: '' }); render(); } }, '+ ARTIFACT')));
   }
   function renderAdd() {
     if (!state.routePaperId && capture.state.mode !== 'manual') return capture.render();
@@ -2043,6 +2043,33 @@
     }
   }
 
+  // Dropping PDFs anywhere in the signed-in app imports them on the Add screen.
+  const signedIn = () => Boolean(state.session && state.session.authenticated) || (!state.config.auth_required && !state.booting);
+  const carriesFiles = event => Boolean(event.dataTransfer && [...(event.dataTransfer.types || [])].includes('Files'));
+  let dragDepth = 0;
+  function showDropTarget(visible) { document.body.classList.toggle('pdf-drop-active', visible); }
+  window.addEventListener('dragenter', event => {
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault(); dragDepth += 1; showDropTarget(true);
+  });
+  window.addEventListener('dragover', event => {
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', event => {
+    if (!carriesFiles(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) showDropTarget(false);
+  });
+  window.addEventListener('drop', event => {
+    dragDepth = 0; showDropTarget(false);
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault();
+    const files = [...event.dataTransfer.files];
+    if (!files.some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''))) { toast('Only PDF files can be imported', true); return; }
+    if (state.screen !== 'add' || state.routePaperId) navigate('add');
+    capture.importPdfs(files);
+  });
   window.addEventListener('popstate', () => activateRoute(routeFromLocation()));
   window.addEventListener('focus', refreshDiscoveries);
   document.addEventListener('visibilitychange', refreshDiscoveries);
