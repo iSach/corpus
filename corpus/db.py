@@ -9,6 +9,7 @@ from .config import ROOT
 from .query import compile_query, fts_literal, SCORES, QueryError
 
 KINDS = ('pdf','code','data','slides','video','other')
+IDENTIFIERS = ('doi','arxiv_id','openreview_id')
 
 def connect(settings, readonly=False):
     if readonly:
@@ -59,6 +60,12 @@ def normalize_arxiv(value):
     if value and not re.fullmatch(r'(?:\d{4}\.\d{4,5}|[a-zA-Z.-]+/\d{7})',value): raise ValueError('Invalid arXiv identifier')
     return value or None
 
+def normalize_openreview(value):
+    value = str(value or '').strip()
+    match = re.fullmatch(r'(?:https?://(?:www\.)?openreview\.net/(?:forum|pdf)\?id=)?([A-Za-z0-9_-]{5,40})',value)
+    if value and not match: raise ValueError('Invalid OpenReview id')
+    return match.group(1) if value else None
+
 def url(value):
     from urllib.parse import urlsplit
     value=str(value or '').strip()
@@ -92,7 +99,7 @@ def duplicate_candidates(db, paper, exclude=None, limit=5):
     return sorted(candidates,key=lambda c:c['similarity'],reverse=True)[:limit]
 
 def find_duplicate(db,paper,threshold,exclude=None):
-    for key in ('doi','arxiv_id'):
+    for key in IDENTIFIERS:
         if paper.get(key):
             r=db.execute(f'SELECT id,title,admission FROM papers WHERE {key}=? AND id!=?',(paper[key],exclude or '')).fetchone()
             if r: return {**dict(r),'similarity':1.,'reason':'Exact '+key+' match'}
@@ -105,7 +112,7 @@ def find_duplicate(db,paper,threshold,exclude=None):
 def validate_paper(db, incoming, existing=None, ingest=False):
     if not isinstance(incoming,dict): raise ValueError('Each paper must be an object')
     base = dict(existing or {})
-    keys=('title','authors','venue','venue_class','year','abstract','canonical_url','arxiv_id','doi','state','field','starred','notes','proposed_reason',*SCORES,*('proposed_'+s for s in SCORES))
+    keys=('title','authors','venue','venue_class','year','abstract','canonical_url','arxiv_id','doi','openreview_id','state','field','starred','notes','proposed_reason',*SCORES,*('proposed_'+s for s in SCORES))
     p={k:incoming.get(k,base.get(k)) for k in keys}
     for key in ('title','venue','abstract','canonical_url','notes','proposed_reason'):
         if p[key] is None: p[key]=''
@@ -116,11 +123,12 @@ def validate_paper(db, incoming, existing=None, ingest=False):
     p['authors']=p['authors'] or []
     if not isinstance(p['authors'],list) or len(p['authors'])>1000 or any(not isinstance(a,str) or len(a)>300 for a in p['authors']): raise ValueError('authors must be an ordered list of names')
     p['authors']=[a.strip() for a in p['authors'] if a.strip()]
-    p['doi']=normalize_doi(p['doi']); p['arxiv_id']=normalize_arxiv(p['arxiv_id'])
+    p['doi']=normalize_doi(p['doi']); p['arxiv_id']=normalize_arxiv(p['arxiv_id']); p['openreview_id']=normalize_openreview(p['openreview_id'])
     p['canonical_url']=url(p['canonical_url'])
     if not p['canonical_url']:
         if p['arxiv_id']: p['canonical_url']='https://arxiv.org/abs/'+p['arxiv_id']
         elif p['doi']: p['canonical_url']='https://doi.org/'+p['doi']
+        elif p['openreview_id']: p['canonical_url']='https://openreview.net/forum?id='+p['openreview_id']
     if p['year'] == '': p['year']=None
     if p['year'] is not None and (type(p['year']) is not int or not 1000 <= p['year'] <= 2200): raise ValueError('Year must be an integer between 1000 and 2200')
     if 'projects' in incoming:
@@ -149,7 +157,7 @@ def validate_paper(db, incoming, existing=None, ingest=False):
     p['starred']=int(bool(p['starred']))
     # A renamed venue needs a fresh class unless the caller chose one.
     if existing and 'venue_class' not in incoming and p['venue']!=(existing.get('venue') or ''): p['venue_class']=None
-    p['venue_class']=p['venue_class'] or ('preprint' if not p['venue'] or 'arxiv' in p['venue'].lower() else 'conference' if any(v in p['venue'].lower() for v in ('neurips','icml','iclr','cvpr','aistats','uai')) else 'journal')
+    p['venue_class']=p['venue_class'] or ('preprint' if not p['venue'] or 'arxiv' in p['venue'].lower() else 'other' if 'workshop' in p['venue'].lower() else 'conference' if any(v in p['venue'].lower() for v in ('neurips','icml','iclr','cvpr','aistats','uai')) else 'journal')
     if p['venue_class'] not in ('conference','preprint','journal','other'): raise ValueError('Invalid venue class')
     proposed=incoming.get('proposed_scores',{})
     if not isinstance(proposed,dict): raise ValueError('proposed_scores must be an object')

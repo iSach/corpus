@@ -6,7 +6,7 @@
       items: [], selected: new Set(), focused: null, offset: 0, states: {}, errors: [], busy: false,
       projectsOpen: false, generation: 0, controller: null, timer: null, lastArxiv: 0, more: false, fallbackTitle: '' };
     const label = id => (fields().find(field => field.id === id) || {}).label || id;
-    const key = paper => paper.arxiv_id ? `arxiv:${paper.arxiv_id}` : paper.doi ? `doi:${paper.doi.toLowerCase()}` : `title:${paper.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')}`;
+    const key = paper => paper.arxiv_id ? `arxiv:${paper.arxiv_id}` : paper.doi ? `doi:${paper.doi.toLowerCase()}` : paper.openreview_id ? `openreview:${paper.openreview_id}` : `title:${paper.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')}`;
     const validProjects = values => Array.isArray(values) ? [...new Set(values.filter(id => fields().some(field => field.id === id)))] : [];
     function initialize() {
       if (c.initialized) return;
@@ -51,6 +51,7 @@
           if (!previous.paper.abstract && paper.abstract) previous.paper.abstract = paper.abstract;
           if (!previous.paper.doi && paper.doi) previous.paper.doi = paper.doi;
           if (!previous.paper.arxiv_id && paper.arxiv_id) previous.paper.arxiv_id = paper.arxiv_id;
+          if (!previous.paper.openreview_id && paper.openreview_id) previous.paper.openreview_id = paper.openreview_id;
           (paper.artifacts || []).forEach(artifact => { if (!(previous.paper.artifacts || []).some(old => old.kind === artifact.kind && old.url === artifact.url)) { previous.paper.artifacts = [...(previous.paper.artifacts || []), artifact]; } });
           if (!previous.paper.existing && paper.existing) previous.paper.existing = paper.existing;
           return;

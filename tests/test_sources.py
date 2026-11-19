@@ -78,8 +78,9 @@ def test_arxiv_atom_metadata_is_normalized_without_network(monkeypatch):
     assert result["artifacts"] == [{"kind": "pdf", "url": "https://arxiv.org/pdf/2401.01234.pdf"}]
 
 
-def test_generic_metadata_urls_are_rejected():
-    with pytest.raises(sources.SourceError, match="generic URLs"):
+def test_pages_without_citation_metadata_are_rejected(monkeypatch):
+    monkeypatch.setattr(sources, "_fetch_url", lambda url, **kwargs: b"<html><head><title>Home</title></head></html>")
+    with pytest.raises(sources.PageError, match="no citation metadata"):
         sources.fetch_metadata("https://publisher.example/articles/not-recognized")
 
     with pytest.raises(sources.SourceError, match="http or https"):
@@ -97,8 +98,11 @@ def test_recognized_metadata_failures_are_distinct_from_invalid_identifiers(monk
     # Recognition happens before the fetch wrapper, so invalid input remains the
     # ordinary validation error that the API can report as HTTP 400.
     with pytest.raises(sources.SourceError) as invalid:
-        sources.fetch_metadata("https://publisher.example/no-identifier")
+        sources.fetch_metadata("https://openreview.net/forum")
     assert type(invalid.value) is sources.SourceError
+    # An unreachable page is an outage, not bad input.
+    with pytest.raises(sources.MetadataFetchError):
+        sources.fetch_metadata("https://publisher.example/no-identifier")
 
 
 def test_redirect_chain_uses_one_total_timeout(monkeypatch):

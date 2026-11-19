@@ -81,7 +81,7 @@ class Catalog:
                 self.cache.popitem(last=False)
         return result, False
 
-    def fetch(self, url, arxiv=False):
+    def fetch(self, url, arxiv=False, accept=None):
         if not self.requests.acquire(blocking=False):
             raise CatalogBusy('Search is busy. Try again in a moment.')
         locked = False
@@ -92,7 +92,7 @@ class Catalog:
                     raise CatalogBusy('arXiv needs a short pause between searches. Try again in a few seconds.')
                 self.arxiv_last = time.monotonic()
             return sources._fetch_url(url, max_bytes=4*1024**2, timeout=8,
-                                      headers={'Accept':'application/atom+xml' if arxiv else 'application/json'})
+                                      headers={'Accept':accept or ('application/atom+xml' if arxiv else 'application/json')})
         finally:
             if locked:
                 self.arxiv_lock.release()
@@ -139,34 +139,57 @@ class Catalog:
         if not isinstance(values,list) or not 1 <= len(values) <= 30 or any(not isinstance(v,str) or not 1 <= len(v.strip()) <= 3000 for v in values):
             raise ValueError('Paste 1–30 paper links, DOIs, or arXiv identifiers')
         results = [None]*len(values)
-        arxiv, dois = [], []
+        arxiv, dois, pages = [], [], []
         for index,value in enumerate(values):
             try:
                 kind,identifier = self.identify(value.strip())
-                (arxiv if kind=='arxiv' else dois).append((index,identifier))
+                if kind == 'openreview':
+                    results[index] = {'input':value,'error':sources.OPENREVIEW_BLOCKED}
+                else:
+                    (arxiv if kind=='arxiv' else dois if kind=='doi' else pages).append((index,kind,identifier))
             except ValueError as error:
                 results[index] = {'input':value,'error':str(error)}
+        def failure(index,error):
+            return index, {'input':values[index],'error':str(error),**({'retry_after':3} if isinstance(error,CatalogBusy) else {})}
+        def crossref(identifier):
+            def lookup():
+                payload=json.loads(self.fetch('https://api.crossref.org/works/'+quote(identifier,safe='')))
+                return sources._crossref_metadata(payload,identifier)
+            return self.cached(('doi',identifier),lookup)[0]
         def doi_lookup(item):
-            index,identifier = item
+            index,_,identifier = item
+            try:
+                return index, {'input':values[index],'paper':crossref(identifier)}
+            except Exception as error:
+                return failure(index,error)
+        def page_lookup(item):
+            index,kind,url = item
             try:
                 def lookup():
-                    payload=json.loads(self.fetch('https://api.crossref.org/works/'+quote(identifier,safe='')))
-                    return sources._crossref_metadata(payload,identifier)
-                paper,_ = self.cached(('doi',identifier),lookup)
+                    page = sources.page_metadata(kind,self.fetch(url,accept='text/html,application/xhtml+xml;q=0.9'),url)
+                    if page.get('doi'):
+                        try:
+                            return sources.merge_page(crossref(page['doi']),page)
+                        except CatalogBusy:
+                            raise
+                        except Exception:
+                            pass
+                    return page
+                paper,_ = self.cached(('page',url),lookup)
                 return index, {'input':values[index],'paper':paper}
             except Exception as error:
-                return index, {'input':values[index],'error':str(error),**({'retry_after':3} if isinstance(error,CatalogBusy) else {})}
+                return failure(index,error)
         def arxiv_lookup():
-            identifiers = list(dict.fromkeys(identifier for _,identifier in arxiv))
+            identifiers = list(dict.fromkeys(identifier for _,_,identifier in arxiv))
             try:
                 papers,_ = self.cached(('arxiv-ids',tuple(identifiers)),lambda:arxiv_records(self.fetch('https://export.arxiv.org/api/query?'+urlencode({'id_list':','.join(identifiers),'max_results':len(identifiers)}),arxiv=True)))
                 found = {paper['canonical_url'].rsplit('/',1)[-1]:paper for paper in papers}
                 stable = {paper['arxiv_id']:paper for paper in papers}
-                return [(index,{'input':values[index],'paper':found.get(identifier) if re.search(r'v\d+$',identifier) else stable.get(identifier)}) for index,identifier in arxiv]
+                return [(index,{'input':values[index],'paper':found.get(identifier) if re.search(r'v\d+$',identifier) else stable.get(identifier)}) for index,_,identifier in arxiv]
             except Exception as error:
-                return [(index,{'input':values[index],'error':str(error),**({'retry_after':3} if isinstance(error,CatalogBusy) else {})}) for index,_ in arxiv]
+                return [failure(index,error) for index,_,_ in arxiv]
         with ThreadPoolExecutor(max_workers=4) as pool:
-            tasks = [pool.submit(doi_lookup,item) for item in dois]
+            tasks = [pool.submit(doi_lookup,item) for item in dois]+[pool.submit(page_lookup,item) for item in pages]
             arxiv_task = pool.submit(arxiv_lookup) if arxiv else None
             for task in tasks:
                 index,result = task.result(); results[index] = result

@@ -743,6 +743,7 @@
       canonical_url: '',
       arxiv_id: '',
       doi: '',
+      openreview_id: '',
       notes: '',
       tags: '',
       scores: { rel: null, cred: null, qual: null, reimpl: null },
@@ -780,6 +781,7 @@
     f.canonical_url = paper.canonical_url || '';
     f.arxiv_id = paper.arxiv_id || '';
     f.doi = paper.doi || '';
+    f.openreview_id = paper.openreview_id || '';
     f.notes = paper.notes || '';
     f.tags = tagsToText(paper.tags);
     SCORE_KEYS.forEach(key => { f.scores[key] = score(paper[key]); f.proposed[key] = score(paper[`proposed_${key}`]); });
@@ -889,7 +891,7 @@
     const payload = {
       title: f.title.trim(), authors: splitAuthors(f.authors), venue: f.venue.trim(), year: number(f.year), field: f.field, projects: f.projects,
       state: f.state || 'unreviewed', starred: Boolean(f.starred), abstract: f.abstract, canonical_url: f.canonical_url,
-      arxiv_id: f.arxiv_id, doi: f.doi, notes: f.notes, tags: splitTags(f.tags),
+      arxiv_id: f.arxiv_id, doi: f.doi, openreview_id: f.openreview_id, notes: f.notes, tags: splitTags(f.tags),
       artifacts: (f.artifacts || []).filter(a => a.url || a.local_path).map(a => ({ kind: a.kind, url: a.url, local_path: a.local_path })),
       rel: score(f.scores.rel), cred: score(f.scores.cred), qual: score(f.scores.qual), reimpl: score(f.scores.reimpl),
       proposed_rel: score(f.proposed.rel), proposed_cred: score(f.proposed.cred), proposed_qual: score(f.proposed.qual), proposed_reimpl: score(f.proposed.reimpl),
@@ -1428,7 +1430,7 @@
     paperLinks.push(h('button', { class: 'artifact-link', type: 'button', onclick: () => copyPaperBibtex(paper) }, 'bibtex'));
     const noteNode = paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes ? document.createTextNode(paper.notes) : h('span', { class: 'soft' }, 'No note');
     return h('aside', { class: 'detail-pane', 'data-scroll-key': 'detail-pane' },
-      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
+      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.openreview_id || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
       renderPublication(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
@@ -1571,7 +1573,7 @@
       detail = h('article', { class: 'inbox-paper' },
         h('header', { class: 'detail-header inbox-paper-header' },
           h('button', { class: 'btn btn-quiet inbox-mobile-back', type: 'button', ariaLabel: 'Back to papers', onclick: () => { inbox.mobileList = true; inbox.filtersOpen = false; render(); } }, '← PAPERS'),
-          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.id), h('span', null, projectName(paper.field))),
+          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.openreview_id || paper.id), h('span', null, projectName(paper.field))),
           h('h1', { class: 'detail-title inbox-paper-title' }, paper.title),
           h('div', { class: 'detail-meta inbox-paper-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} · ${fmt(paper.year)}`),
           h('div', { class: 'artifact-list' }, paper.canonical_url ? h('a', { class: 'artifact-link', href: paper.canonical_url, target: '_blank', rel: 'noopener' }, 'SOURCE ↗') : null, ...links,
@@ -1669,6 +1671,7 @@
       formInput('CANONICAL URL', 'canonical_url', { placeholder: 'https://…' }),
       formInput('ARXIV ID', 'arxiv_id'),
       formInput('DOI', 'doi'),
+      formInput('OPENREVIEW ID', 'openreview_id'),
       formInput('TAGS', 'tags', { placeholder: 'comma, separated, tags' }),
       formInput('ABSTRACT', 'abstract', { multiline: true, rows: 4 }),
       renderScoreEditor(),

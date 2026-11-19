@@ -3,13 +3,13 @@ import json
 import re
 from fastapi import HTTPException
 
-from .db import connection, add_run, validate_paper, write_paper, find_duplicate, get_paper
+from .db import connection, add_run, validate_paper, write_paper, find_duplicate, get_paper, IDENTIFIERS
 from .catalog import Catalog, CatalogBusy, CatalogQueryError
 from .query import fts_literal
 
 
 def metadata_from_library(db,paper_id):
-    row=db.execute('SELECT id,title,authors,venue,year,abstract,canonical_url,doi,arxiv_id FROM papers WHERE id=?',(paper_id,)).fetchone()
+    row=db.execute('SELECT id,title,authors,venue,venue_class,year,abstract,canonical_url,doi,arxiv_id,openreview_id FROM papers WHERE id=?',(paper_id,)).fetchone()
     paper=dict(row); paper['authors']=json.loads(paper['authors'])
     paper['artifacts']=[dict(r) for r in db.execute('SELECT kind,url FROM artifacts WHERE paper_id=?',(paper_id,))]
     return paper
@@ -22,7 +22,7 @@ def annotate(db, papers):
             row=db.execute('SELECT id,admission FROM papers WHERE id=?',(paper['id'],)).fetchone()
             if row:
                 existing={'id':row['id'],'admission':row['admission'],'projects':[r[0] for r in db.execute('SELECT field_id FROM paper_projects WHERE paper_id=?',(row['id'],))]}
-        for key in ('doi','arxiv_id'):
+        for key in IDENTIFIERS:
             if existing: break
             if paper.get(key):
                 row=db.execute('SELECT id,admission FROM papers WHERE '+key+'=?',(paper[key],)).fetchone()
@@ -38,7 +38,7 @@ def capture_one(db, metadata, projects, run_id, query, threshold=.91):
     if not isinstance(metadata,dict): raise ValueError('Each selection must be a paper')
     for flag in ('allow_similar','admit_existing'):
         if flag in metadata and type(metadata[flag]) is not bool: raise ValueError(flag+' must be boolean')
-    keep=('title','authors','venue','year','abstract','canonical_url','doi','arxiv_id','artifacts')
+    keep=('title','authors','venue','venue_class','year','abstract','canonical_url','doi','arxiv_id','openreview_id','artifacts')
     incoming={key:metadata[key] for key in keep if key in metadata}
     incoming.update(projects=projects,field=projects[0],state='unreviewed')
     paper=validate_paper(db,incoming)
@@ -108,7 +108,9 @@ def install_routes(app,settings,limits):
             for index,value in enumerate(identifiers):
                 try:
                     kind,identifier=catalog.identify(value)
-                    key='doi' if kind=='doi' else 'arxiv_id'
+                    key={'doi':'doi','arxiv':'arxiv_id','openreview':'openreview_id'}.get(kind)
+                    if not key:
+                        missing.append(index); continue
                     requested=re.search(r'v\d+$',identifier) if kind=='arxiv' else None
                     identifier=re.sub(r'v\d+$','',identifier) if kind=='arxiv' else identifier
                     row=db.execute('SELECT id,canonical_url FROM papers WHERE '+key+'=?',(identifier,)).fetchone()
