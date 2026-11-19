@@ -25,6 +25,9 @@ class Settings:
     smtp_from: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_FROM',''))
     smtp_security: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_SECURITY','starttls'))
     dev: bool = field(default_factory=lambda: os.getenv('CORPUS_DEV','0')=='1')
+    ai_reviews: bool = field(default_factory=lambda: os.getenv('CORPUS_AI_REVIEWS','1')!='0')
+    anthropic_api_key: str = field(default_factory=lambda: os.getenv('ANTHROPIC_API_KEY',''), repr=False)
+    ai_model: str = field(default_factory=lambda: os.getenv('CORPUS_AI_MODEL','claude-sonnet-5-5'))
     pdf_jobs: bool = True
     venue_checks: bool = field(default_factory=lambda: os.getenv('CORPUS_VENUE_CHECKS','1')!='0')
     venue_check_interval: float = field(default_factory=lambda: float(os.getenv('CORPUS_VENUE_CHECK_INTERVAL','5')))

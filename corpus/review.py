@@ -1,6 +1,6 @@
 """Topic-specific evidence history. Preparing a PDF never implies a completed check.
 
-The owner or discovery agent supplies scientific judgments. Legacy scores and
+The owner, discovery agent, or configured AI reviewer supplies judgments. Legacy scores and
 search queries are retained as suggestions, never promoted to verified evidence.
 """
 import hashlib
@@ -60,19 +60,48 @@ def source_version(url):
     return match[0] if match else ''
 
 
+def automatic_match(snapshot):
+    """Preliminary keyword relevance, not scientific quality."""
+    criteria = snapshot['topic']['relevance_criteria'].strip()
+    stop = set('the and for with that this from into are was were have has their which should must paper papers topic relevant relevance include exclude only not'.split())
+    def terms(text):
+        return {w for w in re.findall(r'[a-z0-9]+', text.lower()) if len(w)>2 and w not in stop}
+    wanted = terms(criteria)
+    if not wanted:
+        return None
+    matched = sorted(wanted & terms(snapshot['title']+' '+snapshot['abstract']))
+    score = round(10*len(matched)/len(wanted))
+    reason = ('Automatic topic match for '+snapshot['topic']['label']+': '+
+              ('shared terms: '+', '.join(matched) if matched else 'no shared terms found')+
+              f'. Preliminary relevance {score}/10 ({len(matched)} of {len(wanted)} criteria terms).')
+    return score, reason
+
+
 def ensure_abstract(db, paper_id):
     paper, snapshot, digest, _ = subject(db, paper_id)
     row = db.execute("SELECT * FROM review_assessments WHERE paper_id=? AND field=? AND input_hash=? AND stage='abstract' ORDER BY id DESC LIMIT 1",
                      (paper_id, paper['field'], digest)).fetchone()
+    match = automatic_match(snapshot)
     if row:
-        return decode(row)
-    aid = db.execute(
-        'INSERT INTO review_assessments(paper_id,field,stage,priority,role,confidence,explanation,limitation,source_url,source_version,assessor,input_hash,snapshot) '
-        "VALUES(?,?,'abstract','unknown','unknown','unknown',?,?,?,?,?,?,?)",
-        (paper_id, paper['field'], 'No relevance assessment has been supplied yet.',
-         'Review the abstract against the topic criteria before relying on the suggested match.',
-         paper['canonical_url'], source_version(paper['canonical_url']), 'not-assessed', digest, json.dumps(snapshot, ensure_ascii=False)),
-    ).lastrowid
+        latest = current(db, paper_id)
+        if row['assessor'] != 'not-assessed' or not match or latest['assessor'] != 'not-assessed':
+            return decode(row)
+        aid = row['id']
+    else:
+        aid = db.execute(
+            'INSERT INTO review_assessments(paper_id,field,stage,priority,role,confidence,explanation,limitation,source_url,source_version,assessor,input_hash,snapshot) '
+            "VALUES(?,?,'abstract','unknown','unknown','unknown',?,?,?,?,?,?,?)",
+            (paper_id, paper['field'], 'No relevance assessment has been supplied yet.',
+             'Review the abstract against the topic criteria before relying on the suggested match.',
+             paper['canonical_url'], source_version(paper['canonical_url']), 'not-assessed', digest, json.dumps(snapshot, ensure_ascii=False)),
+        ).lastrowid
+    if match:
+        score, reason = match
+        db.execute("UPDATE review_assessments SET priority=?,role='adjacent',confidence='low',explanation=?,limitation=?,assessor='automatic-topic-match-v1' WHERE id=?",
+                   ('high' if score>=8 else 'medium' if score>=4 else 'low', reason,
+                    'Keyword overlap only; may miss synonyms or misread exclusions. Full text, credibility, quality and reproducibility have not been assessed.', aid))
+        if paper['proposed_rel'] is None or paper['proposed_reason'].startswith('Automatic topic match'):
+            db.execute('UPDATE papers SET proposed_rel=?,proposed_reason=? WHERE id=?', (score,reason,paper_id))
     return decode(db.execute('SELECT * FROM review_assessments WHERE id=?', (aid,)).fetchone())
 
 
@@ -81,13 +110,18 @@ def summary(db, paper_id):
     history = [decode(row) for row in db.execute('SELECT * FROM review_assessments WHERE paper_id=? ORDER BY id DESC', (paper_id,))]
     for entry in history:
         entry.pop('snapshot', None)
+    _, snapshot, _, _ = subject(db, paper_id)
+    from .ai_review import fingerprint
+    job = db.execute('SELECT id,status,model,prompt_version,attempts,error,assessment_id FROM ai_review_jobs WHERE paper_id=? AND context_hash=? ORDER BY id DESC LIMIT 1',
+                     (paper_id,fingerprint(snapshot))).fetchone()
+    ai = dict(job) if job else None
     # The live topic brief: a snapshot keeps the name and description its assessment saw.
     live = topic(db, db.execute('SELECT field FROM papers WHERE id=?', (paper_id,)).fetchone()[0])
     if not assessment:
-        return {'current':None, 'abstract':None, 'check':None, 'history':history, 'topic':live}
+        return {'current':None, 'abstract':None, 'check':None, 'history':history, 'topic':live, 'ai':ai}
     abstract = assessment if assessment['stage']=='abstract' else decode(db.execute('SELECT * FROM review_assessments WHERE id=?', (assessment['compared_to'],)).fetchone())
     check = db.execute('SELECT * FROM full_text_checks WHERE abstract_id=?', (abstract['id'],)).fetchone()
-    return {'current':assessment, 'abstract':abstract, 'check':dict(check) if check else None, 'history':history, 'topic':live}
+    return {'current':assessment, 'abstract':abstract, 'check':dict(check) if check else None, 'history':history, 'topic':live, 'ai':ai}
 
 
 def request_check(db, paper_id, reason='Requested by you'):
@@ -233,6 +267,26 @@ def download_allowed(db, artifact_id):
 
 
 def install_routes(app, settings):
+    @app.post('/api/review/ai')
+    def retry_ai(body:dict):
+        from .ai_review import enabled, eligible, fingerprint, PROMPT_VERSION
+        if not enabled(settings):
+            raise HTTPException(409, 'Configure the Anthropic API key to enable AI reviews')
+        with connection(settings) as db:
+            db.execute('BEGIN IMMEDIATE')
+            paper, snapshot, digest, _ = subject(db, body.get('id'))
+            if paper['admission'] != 'pending' or not eligible(current(db,paper['id'])):
+                raise HTTPException(409, 'Only pending papers without a completed review can be queued')
+            if not snapshot['abstract'].strip() or not snapshot['topic']['relevance_criteria'].strip():
+                raise HTTPException(409, 'Add an abstract and topic relevance criteria before requesting an AI review')
+            job = db.execute('SELECT status FROM ai_review_jobs WHERE paper_id=? AND context_hash=? AND model=? AND prompt_version=?',
+                             (paper['id'],fingerprint(snapshot),settings.ai_model,PROMPT_VERSION)).fetchone()
+            if job and job['status']=='running':
+                raise HTTPException(409, 'An AI review is already running')
+            db.execute("INSERT INTO ai_review_jobs(paper_id,input_hash,context_hash,model,prompt_version) VALUES(?,?,?,?,?) ON CONFLICT(paper_id,context_hash,model,prompt_version) DO UPDATE SET status='queued',attempts=0,next_attempt=0,error=''",
+                       (paper['id'],digest,fingerprint(snapshot),settings.ai_model,PROMPT_VERSION))
+            return {'status':'queued'}
+
     @app.post('/api/review/check')
     def check(body:dict):
         with connection(settings) as db:
@@ -269,7 +323,7 @@ def install_routes(app, settings):
             for row in db.execute("SELECT id FROM papers WHERE admission='pending' OR (admission='approved' AND EXISTS (SELECT 1 FROM full_text_checks c WHERE c.paper_id=papers.id AND c.status='ready')) ORDER BY proposed_rel DESC NULLS LAST,added DESC"):
                 review = summary(db,row['id'])
                 assessment, check = review['current'], review['check']
-                if not assessment or assessment['assessor']=='not-assessed' or (check and check['status']=='ready'):
+                if not assessment or assessment['assessor'] in ('not-assessed','automatic-topic-match-v1') or (check and check['status']=='ready'):
                     items.append({'id':row['id'],'review':review})
                 if len(items)>=limit:
                     break

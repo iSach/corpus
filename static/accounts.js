@@ -111,7 +111,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
       window.location.reload();
     } catch (error) { state.error = errorText(error); state.busy = false; render(); }
   }
-  function renderAccount() {
+  function renderAccount(appearance, passkeys) {
     return h('main', { class: 'passkeys-layout' }, h('section', { class: 'passkeys-panel' },
       h('h1', null, 'Your account'), h('p', null, 'Your papers, notes, projects, and PDFs are private to your account.'),
       h('form', { class: 'passkey-form', onsubmit: saveAccount },
@@ -120,7 +120,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
         field('account-new', 'NEW PASSWORD (OPTIONAL)', 'password', state.newPassword, value => { state.newPassword = value; }, { minlength: 12, maxlength: 1000, autocomplete: 'new-password' }),
         h('p', { class: 'soft' }, 'New passwords need at least 12 characters. Changing your password signs out your other sessions.'),
         notice(state.error), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.busy }, 'SAVE ACCOUNT')
-      )));
+      ), appearance, passkeys));
   }
   function renderAdmin() {
     if (!session() || !session().user || session().user.role !== 'admin') {
