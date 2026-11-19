@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse
 from .db import connection, initialize
 
 INVITE_TTL = 72 * 3600
+INGEST_PREFIX = 'cps_'
 
 
 def email_address(value):
@@ -96,6 +97,10 @@ class Accounts:
                     used REAL, revoked INTEGER NOT NULL DEFAULT 0,
                     ready INTEGER NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS ingest_tokens (
+                    user_id TEXT PRIMARY KEY REFERENCES users(id),
+                    token_hash TEXT NOT NULL UNIQUE, created REAL NOT NULL
+                );
             ''')
             db.execute("INSERT OR IGNORE INTO users VALUES('owner',?,'admin','active',?)",
                        (email_address(self.owner.admin_email) if self.owner.admin_email else None, time.time()))
@@ -105,6 +110,37 @@ class Accounts:
             row = db.execute('SELECT id,email,role,status,created FROM users WHERE id=?',
                              (user_id or self.user_id.get(),)).fetchone()
         return dict(row) if row else None
+
+    @staticmethod
+    def _hash_ingest_token(token):
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    def ingest_token_user(self, header):
+        """Account ID owning a personal ingest Bearer token, or None."""
+        if not isinstance(header, str) or not header.startswith('Bearer ' + INGEST_PREFIX):
+            return None
+        digest = self._hash_ingest_token(header[7:].strip())
+        with self.registry() as db:
+            row = db.execute('''SELECT u.id FROM ingest_tokens t JOIN users u ON u.id=t.user_id
+                WHERE t.token_hash=? AND u.status='active' ''', (digest,)).fetchone()
+        return row['id'] if row else None
+
+    def ingest_token_info(self, user_id):
+        with self.registry() as db:
+            row = db.execute('SELECT created FROM ingest_tokens WHERE user_id=?', (user_id,)).fetchone()
+        return {'exists': bool(row), 'created': row['created'] if row else None}
+
+    def create_ingest_token(self, user_id):
+        """Replace the account's personal token; the plaintext is returned once."""
+        token = INGEST_PREFIX + secrets.token_urlsafe(32)
+        with self.registry() as db:
+            db.execute('INSERT OR REPLACE INTO ingest_tokens VALUES(?,?,?)',
+                       (user_id, self._hash_ingest_token(token), time.time()))
+        return token
+
+    def revoke_ingest_token(self, user_id):
+        with self.registry() as db:
+            db.execute('DELETE FROM ingest_tokens WHERE user_id=?', (user_id,))
 
     def by_email(self, email):
         # The existing owner can continue using password-only sign-in.
@@ -407,3 +443,27 @@ def install_routes(app, accounts, limits, hash_password, start_workers):
         if new_password:
             accounts.revoke_sessions(user['id'])
         return accounts.issue_session(user['id'])
+
+
+    @app.get('/api/account/ingest-token')
+    def ingest_token_status(request:Request):
+        user = accounts.session_user(request)
+        if not user:
+            raise HTTPException(401, 'Sign in to Corpus')
+        return accounts.ingest_token_info(user['id'])
+
+    @app.post('/api/account/ingest-token')
+    def ingest_token_create(request:Request):
+        user = accounts.session_user(request)
+        if not user:
+            raise HTTPException(401, 'Sign in to Corpus')
+        limited(request, 'ingest-token', 20)
+        return {'token': accounts.create_ingest_token(user['id']), **accounts.ingest_token_info(user['id'])}
+
+    @app.delete('/api/account/ingest-token')
+    def ingest_token_revoke(request:Request):
+        user = accounts.session_user(request)
+        if not user:
+            raise HTTPException(401, 'Sign in to Corpus')
+        accounts.revoke_ingest_token(user['id'])
+        return {'exists': False, 'created': None}

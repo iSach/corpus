@@ -5,7 +5,8 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
   if (token) window.history.replaceState(null, '', window.location.pathname + window.location.search);
   const state = { token, invitation: null, inviteError: '', password: '', confirm: '', busy: false,
     loading: false, error: '', users: [], invitations: [], emailEnabled: false, origin: '', email: '', link: null,
-    currentPassword: '', newPassword: '', accountEmail: '', resendKey: '', mailPending: false };
+    currentPassword: '', newPassword: '', accountEmail: '', resendKey: '', mailPending: false,
+    ingest: { loaded: false, exists: false, created: null, secret: '', error: '' } };
   const errorText = error => error.message || String(error);
   const date = value => new Date(value * 1000).toLocaleString();
   function notice(value) { return value ? h('p', { class: 'notice error-text', role: 'alert' }, value) : null; }
@@ -45,6 +46,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
   async function load() {
     const user = session() && session().user;
     state.accountEmail = user && user.email || '';
+    if (user) loadIngestToken();
     if (!user || user.role !== 'admin') return;
     state.loading = true; state.error = ''; render();
     try {
@@ -99,6 +101,40 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     } catch (error) { state.error = errorText(error); }
     finally { state.busy = false; render(); }
   }
+  async function loadIngestToken() {
+    try { Object.assign(state.ingest, await api('/api/account/ingest-token'), { loaded: true, error: '' }); }
+    catch (error) { state.ingest.error = errorText(error); }
+    render();
+  }
+  async function changeIngestToken(method) {
+    if (state.busy) return;
+    if (method === 'DELETE' && !window.confirm('Revoke this token? The browser extension will stop saving until you generate a new one.')) return;
+    state.busy = true; state.ingest.error = ''; render();
+    try {
+      const data = await api('/api/account/ingest-token', { method });
+      state.ingest.secret = data.token || '';
+      Object.assign(state.ingest, { exists: data.exists, created: data.created, loaded: true });
+    } catch (error) { state.ingest.error = errorText(error); }
+    finally { state.busy = false; render(); }
+  }
+  async function copyIngestToken() {
+    try { await navigator.clipboard.writeText(state.ingest.secret); toast('Token copied'); }
+    catch (_) { toast('Copy failed; select the token and copy it by hand'); }
+  }
+  function renderIngestToken() {
+    const t = state.ingest;
+    return h('section', { class: 'account-section' }, h('h2', null, 'Browser extension'),
+      h('p', { class: 'soft' }, 'A personal ingest token lets the Corpus browser extension save papers into your own Inbox. Treat it like a password. It only adds papers for your approval and cannot read your library.'),
+      t.secret ? h('div', null,
+        h('p', { class: 'soft' }, 'Copy this token now. It is shown only once.'),
+        h('input', { class: 'input', id: 'ingest-token-value', type: 'text', readonly: true, value: t.secret, onfocus: e => e.target.select() }),
+        h('button', { class: 'btn', type: 'button', onclick: copyIngestToken }, 'COPY')) : null,
+      !t.secret && t.exists ? h('p', { class: 'soft' }, `A token was created ${date(t.created)}.`) : null,
+      notice(t.error),
+      h('div', { class: 'account-actions' },
+        h('button', { class: 'btn', type: 'button', disabled: state.busy || !t.loaded, onclick: () => changeIngestToken('POST') }, t.exists ? 'REPLACE TOKEN' : 'GENERATE TOKEN'),
+        t.exists ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => changeIngestToken('DELETE') }, 'REVOKE') : null));
+  }
   async function saveAccount(event) {
     event.preventDefault();
     if (state.busy) return;
@@ -120,7 +156,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
         field('account-new', 'NEW PASSWORD (OPTIONAL)', 'password', state.newPassword, value => { state.newPassword = value; }, { minlength: 12, maxlength: 1000, autocomplete: 'new-password' }),
         h('p', { class: 'soft' }, 'New passwords need at least 12 characters. Changing your password signs out your other sessions.'),
         notice(state.error), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.busy }, 'SAVE ACCOUNT')
-      ), appearance, passkeys));
+      ), renderIngestToken(), appearance, passkeys));
   }
   function renderAdmin() {
     if (!session() || !session().user || session().user.role !== 'admin') {
