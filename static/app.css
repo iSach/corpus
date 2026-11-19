@@ -8,6 +8,7 @@
 @font-face { font-family: 'Lora'; font-style: italic; font-weight: 400; src: url('/static/fonts/lora-italic-400.ttf') format('truetype'); }
 
 :root {
+  color-scheme: light;
   --bg: #f3f2f2;
   --surface: #eae9e9;
   --surface-2: #f8f4f4;
@@ -636,3 +637,54 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 .invitation-result { padding: 14px; margin: 16px 0; border: 1px solid var(--line); background: var(--surface-2); }
 .invitation-result .input { width: 100%; }
 @media (max-width: 600px) { .account-row { align-items: flex-start; flex-direction: column; gap: 4px; } }
+
+
+/* Browser-local appearance preferences. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --bg: #161e29; --surface: #1d2937; --surface-2: #202e3e;
+  --ink: #ebeff3; --ink-2: #d9e1e9; --muted: #b2bfcb; --soft: #9eafbf;
+  --line: rgba(190,210,225,.25); --line-soft: rgba(190,210,225,.12);
+  --accent: #91b8d7; --accent-dark: #b9d8ef; --accent-soft: rgba(115,164,201,.20);
+  --neutral-300: #455767;
+}
+:root[data-theme="oled"] {
+  color-scheme: dark;
+  --bg: #000; --surface: #101010; --surface-2: #181818;
+  --ink: #f1f1ed; --ink-2: #e1e1dc; --muted: #bcbcb4; --soft: #aaa9a1;
+  --line: rgba(238,238,230,.24); --line-soft: rgba(238,238,230,.12);
+  --accent: #e6ba70; --accent-dark: #edc783; --accent-soft: rgba(230,186,112,.17);
+  --neutral-300: #41413d;
+}
+.account-section { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
+.account-section h2 { margin: 0 0 8px; font: 600 19px/1.2 var(--display); }
+.account-section > label { display: block; margin: 8px 0 4px; color: var(--muted); font: 10px var(--mono); }
+.theme-select { max-width: 260px; }
+:root[data-theme="midnight"] a:hover, :root[data-theme="oled"] a:hover { color: var(--ink); }
+:root[data-theme="midnight"] .btn:hover, :root[data-theme="oled"] .btn:hover,
+:root[data-theme="midnight"] .icon-button:hover, :root[data-theme="oled"] .icon-button:hover { background: var(--accent-soft); }
+:root[data-theme="midnight"] .input:hover, :root[data-theme="oled"] .input:hover,
+:root[data-theme="midnight"] .select:hover, :root[data-theme="oled"] .select:hover,
+:root[data-theme="midnight"] .textarea:hover, :root[data-theme="oled"] .textarea:hover { border-color: var(--muted); }
+:root[data-theme="midnight"] .sql-console, :root[data-theme="oled"] .sql-console { background: var(--surface-2); color: var(--ink); }
+:root[data-theme="midnight"] .notice, :root[data-theme="oled"] .notice { background: #402a29; color: #ffd1c4; }
+:root[data-theme="midnight"] .error-text, :root[data-theme="oled"] .error-text,
+:root[data-theme="midnight"] .btn-danger, :root[data-theme="oled"] .btn-danger,
+:root[data-theme="midnight"] .toast.error, :root[data-theme="oled"] .toast.error { color: #ffb4a5; }
+:root[data-theme="midnight"] .field-stat-track, :root[data-theme="oled"] .field-stat-track { background: var(--neutral-300); }
+:root[data-theme="midnight"] .hist-bars i, :root[data-theme="oled"] .hist-bars i { background: var(--muted); }
+:root[data-theme="midnight"] .score-cell:hover, :root[data-theme="oled"] .score-cell:hover,
+:root[data-theme="midnight"] .score-cell.active, :root[data-theme="oled"] .score-cell.active { color: var(--ink); }
+:root[data-theme="midnight"] .tag, :root[data-theme="oled"] .tag,
+:root[data-theme="midnight"] .artifact-badge, :root[data-theme="oled"] .artifact-badge,
+:root[data-theme="midnight"] .format-tabs, :root[data-theme="oled"] .format-tabs,
+:root[data-theme="midnight"] .format-tab, :root[data-theme="oled"] .format-tab { border-color: var(--line); }
+:root[data-theme="midnight"] .symbol-triangle, :root[data-theme="oled"] .symbol-triangle { color: #73c7ef; }
+:root[data-theme="midnight"] .symbol-circle, :root[data-theme="oled"] .symbol-circle { color: #ffae76; }
+:root[data-theme="midnight"] .symbol-square, :root[data-theme="oled"] .symbol-square { color: #6dd9b4; }
+:root[data-theme="midnight"] .symbol-diamond, :root[data-theme="oled"] .symbol-diamond { color: #e6a4cd; }
+:root[data-theme="midnight"] .symbol-star, :root[data-theme="oled"] .symbol-star { color: #e8bf75; }
+:root[data-theme="midnight"] .symbol-cross, :root[data-theme="oled"] .symbol-cross { color: #c8a9ee; }
+:root[data-theme="midnight"] .symbol-hexagon, :root[data-theme="oled"] .symbol-hexagon { color: #72d4d4; }
+:root[data-theme="midnight"] .symbol-pentagon, :root[data-theme="oled"] .symbol-pentagon { color: #f0a1b7; }

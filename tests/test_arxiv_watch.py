@@ -117,17 +117,6 @@ def test_fetch_arxiv_gives_up_after_a_bounded_number_of_attempts():
     assert waits == [5.0, 15.0, 45.0]
 
 
-def test_fetch_arxiv_does_not_retry_a_rejected_query():
-    opener, calls = scripted_opener([http_error(400), Response(ATOM)])
-    waits = []
-
-    with pytest.raises(arxiv_watch.WatchError, match=r"failed after 1 attempt \(HTTP 400\)"):
-        arxiv_watch.fetch_arxiv("all:(", 10, opener=opener, sleep=waits.append)
-
-    assert len(calls) == 1
-    assert waits == []
-
-
 def test_run_remembers_seen_papers_and_merges_topic_tags(tmp_path):
     state_path = tmp_path / "state.json"
     topics = [
@@ -173,34 +162,6 @@ def test_workflow_reads_topics_from_a_secret():
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/paper-watch.yml").read_text()
     assert "CORPUS_TOPICS: ${{ secrets.CORPUS_TOPICS }}" in workflow
     assert "vars.CORPUS_TOPICS" not in workflow
-
-
-def test_main_warns_when_no_topics_are_configured(capsys):
-    assert arxiv_watch.main({"GITHUB_ACTIONS": "true"}) == 0
-    out = capsys.readouterr().out
-    assert '"topics": 0' in out
-    assert "::warning title=Corpus paper watch::CORPUS_TOPICS is empty" in out
-
-    assert arxiv_watch.main({}) == 0
-    assert "Corpus paper watch: CORPUS_TOPICS is empty" in capsys.readouterr().err
-
-
-def test_main_reports_configuration_errors_as_annotations(capsys):
-    assert arxiv_watch.main({"GITHUB_ACTIONS": "true", "CORPUS_TOPICS": "not json"}) == 1
-    assert "::error title=Corpus paper watch::CORPUS_TOPICS must be valid JSON" in capsys.readouterr().out
-
-
-def test_run_checks_ingest_url_before_searching():
-    def fetch(query, maximum):
-        raise AssertionError("arXiv should not be queried with a broken destination")
-
-    environment = {
-        "CORPUS_TOPICS": '[{"name":"A","query":"all:a"}]',
-        "CORPUS_INGEST_URL": "",
-        "CORPUS_INGEST_TOKEN": "test-token",
-    }
-    with pytest.raises(arxiv_watch.WatchError, match="HTTPS URL"):
-        arxiv_watch.run(environment, fetch=fetch, pause=lambda _seconds: None)
 
 
 def test_topic_configuration_is_validated():

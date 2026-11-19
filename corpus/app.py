@@ -11,6 +11,7 @@ from .db import connection, initialize, validate_paper, find_duplicate, duplicat
 from .query import QueryError, compile_query
 from .exporting import export_papers, export_papers_list, get_preferences, save_preferences, set_exclusions
 from .stats import stats
+from .ai_review import worker as ai_worker, enabled as ai_enabled
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
 from .topics import list_topics, save_topic
@@ -75,10 +76,13 @@ def create_app(settings=None):
         if asyncio.get_running_loop() is not worker_loop:
             worker_loop.call_soon_threadsafe(start_workers,user_id)
             return
-        if not owner_settings.pdf_jobs or user_id in tasks: return
+        if user_id in tasks: return
         concrete=accounts.library(user_id)
-        tasks[user_id]=[asyncio.create_task(worker(concrete,worker_stop))]
-        if concrete.venue_checks: tasks[user_id].append(asyncio.create_task(venue_worker(concrete,worker_stop)))
+        tasks[user_id]=[]
+        if concrete.pdf_jobs:
+            tasks[user_id].append(asyncio.create_task(worker(concrete,worker_stop)))
+            if concrete.venue_checks: tasks[user_id].append(asyncio.create_task(venue_worker(concrete,worker_stop)))
+        if ai_enabled(concrete): tasks[user_id].append(asyncio.create_task(ai_worker(concrete,worker_stop)))
     @asynccontextmanager
     async def lifespan(app):
         nonlocal worker_stop,worker_loop
@@ -179,7 +183,7 @@ def create_app(settings=None):
     @app.get('/api/config')
     def config(request:Request):
         with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')] if authenticated(request) else []
-        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request)}
+        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model} if authenticated(request) or settings.dev else None}
     @app.get('/api/topics')
     def topics():
         with connection(settings,True) as db: return {'topics':list_topics(db)}

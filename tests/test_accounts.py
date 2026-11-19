@@ -10,6 +10,7 @@ from corpus.app import create_app
 from corpus.config import Settings
 from corpus.db import connection, initialize, add_run, validate_paper, write_paper
 from corpus import accounts as account_module, jobs, sources
+from helpers import Authenticator, pdf_bytes
 
 ORIGIN = 'https://corpus.example'
 PASSWORD = 'existing-owner-password'
@@ -109,12 +110,11 @@ def test_only_admin_can_invite_list_revoke_or_disable(site):
 
 
 def test_library_isolation_including_guessed_ids_sql_exports_and_pdf_files(site, monkeypatch):
-    from test_api import _pdf_fixture
     app, admin, settings = site
     alice, a = join(app, invitation(admin,'alice@example.org'))
     bob, b = join(app, invitation(admin,'bob@example.org'))
     clients = [(admin,'owner','Admin confidential'), (alice,a['id'],'Alice confidential'), (bob,b['id'],'Bob confidential')]
-    monkeypatch.setattr(sources,'safe_download',lambda url,max_bytes:_pdf_fixture())
+    monkeypatch.setattr(sources,'safe_download',lambda url,max_bytes:pdf_bytes())
     for client, user_id, title in clients:
         response = client.post('/api/papers',json={'title':title,'doi':'10.5555/same','notes':title,'artifacts':[{'kind':'pdf','url':'https://example.org/same.pdf'}]})
         assert response.status_code == 200, response.text
@@ -263,7 +263,6 @@ def test_request_scope_does_not_leak_between_parallel_accounts(site):
 
 
 def test_member_passkeys_sign_in_to_their_library_and_cannot_cross_accounts(site):
-    from test_passkeys import Authenticator
     app, admin, _ = site
     member, user = join(app,invitation(admin))
     authenticator = Authenticator()

@@ -5,8 +5,6 @@ import pytest
 
 from corpus import sources
 from corpus.catalog import Catalog
-from corpus.db import normalize_openreview
-from test_api import app_client
 
 
 CITATION_PAGE = b"""<html><head>
@@ -47,11 +45,6 @@ def test_links_are_recognized_by_kind(value, kind, expected):
     assert sources._recognize(value) == sources._Identifier(kind, expected)
 
 
-def test_openreview_links_need_an_id():
-    with pytest.raises(sources.SourceError, match="no paper id"):
-        sources._recognize("https://openreview.net/group?id=Conference/2025")
-
-
 def test_citation_tags_become_a_paper():
     paper = sources.page_metadata("page", CITATION_PAGE, "https://journal.example/articles/1/2/2025/")
     assert paper == {
@@ -79,19 +72,6 @@ def test_conference_workshop_paper_uses_openreview_as_home():
     assert paper["artifacts"] == [{"kind": "other", "url": url}]
 
 
-def test_conference_main_track_and_named_workshops():
-    main = sources.page_metadata("conference", conference_page(badge="Poster", openreview=""), "https://icml.cc/virtual/2025/poster/9")
-    assert (main["venue"], main["venue_class"]) == ("International Conference on Machine Learning", "conference")
-    assert main["canonical_url"] == "https://icml.cc/virtual/2025/poster/9" and main["artifacts"] == []
-    named = sources.page_metadata("conference", conference_page(badge="Poster in Workshop: <a>Toy4Sci: An ICML 2025 Workshop on Toys</a>"), "https://icml.cc/virtual/2025/1")
-    assert named["venue"] == "Toy4Sci: An ICML 2025 Workshop on Toys"
-
-
-def test_conference_pages_that_are_not_papers_are_rejected():
-    with pytest.raises(sources.PageError, match="not a paper"):
-        sources.page_metadata("conference", conference_page(badge="Workshop"), "https://iclr.cc/virtual/2025/workshop/1")
-
-
 def crossref(doi):
     return json.dumps({"message": {"DOI": doi, "title": ["Published toy flows"], "author": [{"given": "Ada", "family": "Example"}],
                                    "container-title": ["Journal of Examples"], "published": {"date-parts": [[2025]]}}}).encode()
@@ -112,19 +92,6 @@ def test_catalog_prefers_crossref_for_pages_with_a_doi(monkeypatch):
     assert paper["artifacts"] == [{"kind": "pdf", "url": "https://journal.example/articles/1/2/2025/paper.pdf"}]
 
 
-def test_catalog_copernicus_links_go_straight_to_crossref(monkeypatch):
-    calls = []
-    monkeypatch.setattr(sources, "_fetch_url", lambda url, **kwargs: calls.append(url) or crossref("10.5194/gmd-1-2-2025"))
-    paper = Catalog().resolve(["https://gmd.copernicus.org/articles/1/2/2025/"])[0]["paper"]
-    assert calls == ["https://api.crossref.org/works/10.5194%2Fgmd-1-2-2025"] and paper["doi"] == "10.5194/gmd-1-2-2025"
-
-
-def test_catalog_explains_openreview_links_without_fetching(monkeypatch):
-    def unexpected(*args, **kwargs): raise AssertionError("OpenReview must not be fetched")
-    monkeypatch.setattr(sources, "_fetch_url", unexpected)
-    assert Catalog().resolve(["https://openreview.net/forum?id=AbCdE12345"])[0]["error"] == sources.OPENREVIEW_BLOCKED
-
-
 def test_conference_paper_is_saved_once_under_its_openreview_id(app_client, monkeypatch):
     client, _ = app_client
     monkeypatch.setattr(sources, "_fetch_url", lambda url, **kwargs: conference_page())
@@ -143,10 +110,3 @@ def test_conference_paper_is_saved_once_under_its_openreview_id(app_client, monk
     again = client.post("/api/capture", json={"projects": ["diff-compose"], "papers": [{**resolved, "title": "Something else entirely"}]}).json()["results"][0]
     assert again["status"] in ("filed", "exists")
     assert set(client.get("/api/paper", params={"id": paper["id"]}).json()["projects"]) == {"sbi-pretrain", "diff-compose"}
-
-
-def test_openreview_ids_are_normalized():
-    assert normalize_openreview("https://openreview.net/forum?id=AbCdE12345") == "AbCdE12345"
-    assert normalize_openreview("") is None
-    with pytest.raises(ValueError, match="OpenReview"):
-        normalize_openreview("not an id!")

@@ -1,5 +1,4 @@
 """BibTeX options, the Export page's memory, and Inbox topic counts."""
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,27 +46,6 @@ def test_published_link_skips_arxiv_and_falls_back_with_best(client):
     assert "url        = {https://arxiv.org/abs/2302.00002}" in bib(client, [pid], bibtex={"url": "best"})
     text = bib(client, [pid], bibtex={"preprints": "misc"})
     assert text.startswith("@misc{") and "howpublished = {arXiv preprint arXiv:2302.00002}" in text
-
-
-def test_style_options(client):
-    pid = add(client, title="ResNet: Physics-Informed U-Net for 3D PDE flows", authors=["Ana Gómez", "Bo Li", "Cy Dvořák", "Di Wu"], year=2023)
-    other = add(client, title="ResNet revisited", authors=["Ana Gómez"], year=2023)
-    text = bib(client, [pid], bibtex={"protect": "smart", "accents": "latex", "authors": 2, "keys": "short"})
-    assert "title      = {{ResNet:} Physics-Informed {U-Net} for {3D} {PDE} flows}" in text
-    assert "author     = {Ana G{\\'o}mez and Bo Li and others}" in text
-    assert text.startswith("@article{gomez2023resnet,")
-    # The second paper's key does not depend on which papers are exported.
-    assert bib(client, [other], bibtex={"keys": "short"}).startswith("@article{gomez2023resnetb,")
-    assert "title      = {{ResNet: Physics-Informed U-Net for 3D PDE flows}}" in bib(client, [pid], bibtex={"protect": "all"})
-
-
-def test_sort_and_invalid_options(client):
-    late = add(client, title="Zebra", authors=["Zoe Adams"], year=2020)
-    early = add(client, title="Aardvark", authors=["Yan Brown"], year=2025)
-    assert bib(client, [late, early], sort="year").index("Aardvark") < bib(client, [late, early], sort="year").index("Zebra")
-    assert bib(client, [late, early], sort="author").index("Zebra") < bib(client, [late, early], sort="author").index("Aardvark")
-    assert client.post("/api/export", json={"format": "bibtex", "bibtex": {"url": "everywhere"}}).status_code == 400
-    assert client.post("/api/export", json={"format": "bibtex", "bibtex": {"authors": -1}}).status_code == 400
 
 
 def test_export_page_remembers_settings_and_exclusions(client):

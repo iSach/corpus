@@ -244,6 +244,7 @@
       screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(segment) ? segment : 'library';
     }
     if (screen === 'paper') screen = 'library';
+    if (screen === 'passkeys') screen = 'account';
     if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(screen)) screen = 'library';
     return { screen, paperId: url.searchParams.get('paper') || url.searchParams.get('id') || null,
       captureUrl: screen === 'add' ? url.searchParams.get('url') : null,
@@ -279,8 +280,8 @@
     else if (route.screen === 'add') { if (!route.paperId) capture.activate(route); loadForm(route.paperId); }
     else if (route.screen === 'export') loadExportPage();
     else if (route.screen === 'topics') loadTopics();
-    else if (route.screen === 'passkeys') loadPasskeys();
-    else if (route.screen === 'admin' || route.screen === 'account') accounts.load();
+    else if (route.screen === 'account') { accounts.load(); loadPasskeys(); }
+    else if (route.screen === 'admin') accounts.load();
     else if (route.screen === 'inbox') { if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
     render();
   }
@@ -554,6 +555,18 @@
     loadInboxPaper(next.id);
   }
 
+  async function requestAiReview() {
+    const inbox = state.inbox;
+    if (inbox.busy || !inbox.detail) return;
+    inbox.busy = true; inbox.error = ''; render();
+    try {
+      await api('/api/review/ai', { method: 'POST', body: { id: inbox.detail.id } });
+      await loadInboxPaper(inbox.detail.id);
+      toast('AI review queued');
+    } catch (error) { inbox.error = getError(error); }
+    finally { inbox.busy = false; render(); }
+  }
+
   async function prepareFullText() {
     const inbox = state.inbox;
     if (inbox.busy || !inbox.detail) return;
@@ -786,6 +799,7 @@
     f.tags = tagsToText(paper.tags);
     SCORE_KEYS.forEach(key => { f.scores[key] = score(paper[key]); f.proposed[key] = score(paper[`proposed_${key}`]); });
     f.proposed_reason = paper.proposed_reason || '';
+    f.review = paper.review;
     f.artifacts = Array.isArray(paper.artifacts) ? paper.artifacts.map(a => ({ kind: a.kind || 'other', url: a.url || '', local_path: a.local_path || '', fetch_status: a.fetch_status || '' })) : [];
     return f;
   }
@@ -1246,7 +1260,7 @@
       ariaLabel: screen === 'inbox' ? 'Inbox' : null,
       onclick: event => { event.preventDefault(); navigate(screen); }
     }, screen[0].toUpperCase() + screen.slice(1), screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null)));
-    const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'PEOPLE') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: () => navigate('passkeys') }, 'PASSKEYS'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
+    const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'ADMIN') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
       h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
       nav,
@@ -1256,7 +1270,7 @@
   }
   function latestRunSummary(stats, unreviewed) {
     const runs = Array.isArray(stats.runs) ? stats.runs : [];
-    const latest = runs[0];
+    const latest = runs[runs.length - 1];
     if (latest) return `ingest ${formatDate(latest.timestamp)} · +${Number(latest.proposed || 0)} proposed`;
     if (unreviewed != null) return `${unreviewed} unreviewed`;
     return 'ingest —';
@@ -1492,6 +1506,7 @@
       fact('relevance', assessed ? `${cap(assessment.priority)} · ${roles[assessment.role]}` : 'Awaiting assessment', { class: assessed && assessment.priority === 'high' ? 'review-high' : '' }),
       fact('evidence', full ? 'Full text checked' : assessed ? 'Abstract only' : 'No assessment yet', { class: 'evidence-level' }),
       assessed ? fact('confidence', cap(assessment.confidence), { title: 'Confidence in the relevance assessment, not model quality' }) : null,
+      assessed ? fact('reviewed by', assessment.assessor === 'owner' ? 'You' : assessment.assessor === 'automatic-topic-match-v1' ? 'Automatic keyword match' : 'Automatic · ' + assessment.assessor) : null,
       fact('version', assessment && assessment.source_version ? assessment.source_version : 'Unspecified'),
       check && !full ? fact('full text', checkLabel[check.status]) : null);
     const comparison = full && abstract ? h('details', { class: 'review-comparison', 'data-disclosure-key': `comparison:${paper.id}:${assessment.id}` },
@@ -1502,6 +1517,8 @@
     const history = (review.history || []).filter(entry => entry.assessor !== 'not-assessed' && (!assessment || (entry.id !== assessment.id && (!abstract || entry.id !== abstract.id))));
     const decision = paper.last_decision;
     return h('section', { class: 'detail-section review-evidence' }, h('div', { class: 'panel-title' }, 'RELEVANCE'), facts,
+      review.ai ? h('p', { class: 'review-hint', role: 'status' }, `AI review · ${review.ai.model} · ${{ queued: 'queued', running: 'reviewing abstract…', complete: 'draft ready', failed: review.ai.attempts >= 3 ? 'failed; retry available' : 'failed; retry scheduled', superseded: 'paper or review changed' }[review.ai.status] || review.ai.status}${review.ai.error ? ' · ' + review.ai.error : ''}`) : state.config.ai_review && state.config.ai_review.enabled ? h('p', { class: 'review-hint' }, 'AI reviews run automatically for pending papers with an abstract and topic criteria.') : h('p', { class: 'review-hint' }, 'AI reviews are not configured. Keyword matches are preliminary; no LLM has reviewed them.'),
+      paper.admission === 'pending' && state.config.ai_review && state.config.ai_review.enabled && (!assessed || assessment.assessor === 'automatic-topic-match-v1') && (!review.ai || ['failed','superseded'].includes(review.ai.status)) ? h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: requestAiReview }, 'REQUEST AI REVIEW') : null,
       h('p', { class: 'review-explanation' }, assessed ? assessment.explanation : 'No relevance explanation supplied yet.'),
       assessment && assessment.limitation && assessed ? h('p', { class: 'review-limitation' }, h('strong', null, 'Limit: '), assessment.limitation) : null,
       assessment && assessment.questions.length ? h('div', { class: 'review-questions' }, h('strong', null, 'Questions before deciding'), h('ul', null, ...assessment.questions.map(question => h('li', null, question)))) : null,
@@ -1584,8 +1601,8 @@
         h('div', { class: 'inbox-reading', 'data-scroll-key': 'inbox-detail' },
           renderReviewEvidence(paper),
           h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('p', { class: 'detail-abstract inbox-abstract' }, paper.abstract || 'No abstract available.')),
-          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, 'IMPORTER SUGGESTION'),
-            h('div', { class: 'review-hint' }, `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
+          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, (paper.proposed_reason || '').startsWith('AI draft · ') ? 'AI DRAFT SCORES' : 'IMPORTER SUGGESTION'),
+            h('div', { class: 'review-hint' }, (paper.proposed_reason || '').startsWith('AI draft · ') ? `Abstract only · ${SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${paper['proposed_' + key] == null ? 'unknown' : scoreLabel(paper['proposed_' + key]) + '/10'}`).join(' · ')}` : `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
             paper.proposed_reason ? h('p', { class: 'inbox-reason' }, paper.proposed_reason) : null) : null,
           paper.notes ? h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'MY NOTE'), h('div', { class: 'detail-note' }, paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes)) : null,
           h('section', { class: 'detail-section' }, h('details', { class: 'inbox-provenance', 'data-disclosure-key': `discovery:${paper.id}` }, h('summary', null, 'Discovery history'),
@@ -1688,9 +1705,9 @@
   }
   function renderEntryRail() {
     const proposed = state.form ? state.form.proposed : {};
-    const values = SCORE_KEYS.map(key => scoreLabel(proposed[key])).join(' · ');
+    const values = SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${scoreLabel(proposed[key])}`).join(' · ');
     const candidates = state.duplicateCandidates || [];
-    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'LLM DRAFT'), h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'ACCEPT DRAFT SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
+    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'AUTOMATIC / IMPORTER DRAFT'), h('p', { class: 'draft-values draft-reason' }, state.form && state.form.review && state.form.review.ai ? `AI review: ${state.form.review.ai.status} · ${state.form.review.ai.model}${state.form.review.ai.error ? ' · ' + state.form.review.ai.error : ''}` : state.config.ai_review && state.config.ai_review.enabled ? 'AI reviews run automatically for pending inbox papers with an abstract and topic criteria.' : 'LLM reviews are not configured.'), state.form && state.form.review && state.form.review.current ? h('p', { class: 'draft-values draft-reason' }, `${state.form.review.current.assessor === 'owner' ? 'Your review' : state.form.review.current.assessor === 'not-assessed' ? 'Awaiting review' : 'Automatic review · ' + state.form.review.current.assessor}: ${state.form.review.current.explanation}`) : null, h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'ACCEPT DRAFT SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
   }
 
   function renderExport() {
@@ -1872,8 +1889,8 @@
       h('div', null, h('strong', null, key.name), h('div', { class: 'soft' }, `Added ${formatDate(key.created)} · ${key.last_used ? `last used ${formatDate(key.last_used)}` : 'not used yet'}`)),
       h('button', { class: 'btn', type: 'button', disabled: settings.busy || !available, ariaLabel: `Remove ${key.name}`, onclick: () => removePasskey(key) }, 'REMOVE')
     ));
-    return h('main', { class: 'passkeys-layout', 'data-scroll-key': 'passkeys-layout' }, h('section', { class: 'passkeys-panel' },
-      h('h1', null, 'Passkeys'),
+    return h('section', { class: 'account-section' },
+      h('h2', null, 'Passkeys'),
       h('p', null, 'Use Face ID, Touch ID, or your device unlock to sign in. After registration, Corpus tries a passkey first when you return.'),
       h('p', null, 'On Apple devices, choose iCloud Keychain when prompted. Your password remains available.'),
       !available ? h('div', { class: 'notice' }, 'Open Corpus at its secure address in a browser that supports passkeys to set them up.') : null,
@@ -1887,7 +1904,18 @@
         settings.error ? h('div', { class: 'notice error-text', role: 'alert' }, settings.error) : null,
         h('button', { class: 'btn btn-primary', type: 'submit', disabled: settings.busy || !available }, settings.busy ? 'WAITING…' : 'ADD PASSKEY')
       )
-    ));
+    );
+  }
+  function renderThemeSelector() {
+    const selected = document.documentElement.dataset.theme || 'light';
+    return h('section', { class: 'account-section' }, h('h2', null, 'Appearance'),
+      h('label', { for: 'account-theme' }, 'THEME'),
+      h('select', { id: 'account-theme', class: 'select theme-select', value: selected, onchange: event => {
+        const theme = event.target.value;
+        document.documentElement.dataset.theme = theme;
+        try { localStorage.setItem('corpus.theme', theme); } catch (_) {}
+      } }, ...[['light', 'Light'], ['midnight', 'Midnight blue'], ['oled', 'OLED black']].map(([value, label]) => h('option', { value, selected: value === selected }, label))),
+      h('p', { class: 'soft' }, 'Saved on this browser and device.'));
   }
   function paletteItems() {
     const items = [
@@ -1924,7 +1952,7 @@
 
   function renderScreen() {
     if (state.screen === 'admin') return accounts.renderAdmin();
-    if (state.screen === 'account') return accounts.renderAccount();
+    if (state.screen === 'account') return accounts.renderAccount(renderThemeSelector(), renderPasskeys());
     if (state.screen === 'stats') return renderStats();
     if (state.screen === 'add') return renderAdd();
     if (state.screen === 'export') return renderExport();

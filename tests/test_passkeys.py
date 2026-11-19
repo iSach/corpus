@@ -1,60 +1,17 @@
 """Verify real WebAuthn signatures, challenge binding, and password recovery."""
 import base64
-import hashlib
 import json
-import secrets
 
-import cbor2
 import pytest
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
 from corpus.app import create_app
 from corpus.config import Settings
 from corpus.db import connection
+from helpers import Authenticator, encoded
 
 ORIGIN = 'https://corpus.example'
 PASSWORD = 'test-owner-password'
-
-
-def encoded(data):
-    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
-
-
-class Authenticator:
-    """A software authenticator, including zero-counter synced passkeys."""
-    def __init__(self):
-        self.key = ec.generate_private_key(ec.SECP256R1())
-        self.credential_id = secrets.token_bytes(32)
-        self.user_handle = None
-
-    def registration(self, options, *, verified=True, origin=ORIGIN):
-        self.user_handle = options['user']['id']
-        public = self.key.public_key().public_numbers()
-        cose = cbor2.dumps({1:2, 3:-7, -1:1, -2:public.x.to_bytes(32,'big'), -3:public.y.to_bytes(32,'big')})
-        flags = 0x59 | (0x04 if verified else 0)
-        auth_data = hashlib.sha256(options['rp']['id'].encode()).digest() + bytes([flags]) + bytes(4)
-        auth_data += bytes(16) + len(self.credential_id).to_bytes(2,'big') + self.credential_id + cose
-        client = json.dumps({'type':'webauthn.create','challenge':options['challenge'],'origin':origin,'crossOrigin':False}).encode()
-        return {
-            'id':encoded(self.credential_id), 'rawId':encoded(self.credential_id), 'type':'public-key',
-            'response':{'attestationObject':encoded(cbor2.dumps({'fmt':'none','attStmt':{},'authData':auth_data})),
-                        'clientDataJSON':encoded(client),'transports':['internal','hybrid']},
-        }
-
-    def assertion(self, options, *, count=0, verified=True, present=True, origin=ORIGIN,
-                  rp_id=None, challenge=None, cross_origin=False, user_handle=None):
-        client = json.dumps({'type':'webauthn.get','challenge':challenge or options['challenge'],
-                             'origin':origin,'crossOrigin':cross_origin}).encode()
-        flags = 0x18 | (0x04 if verified else 0) | (0x01 if present else 0)
-        auth_data = hashlib.sha256((rp_id or options['rpId']).encode()).digest() + bytes([flags]) + count.to_bytes(4,'big')
-        signature = self.key.sign(auth_data + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
-        return {
-            'id':encoded(self.credential_id), 'rawId':encoded(self.credential_id), 'type':'public-key',
-            'response':{'clientDataJSON':encoded(client),'authenticatorData':encoded(auth_data),
-                        'signature':encoded(signature),'userHandle':user_handle or self.user_handle},
-        }
 
 
 def post(client, path, body=None, origin=ORIGIN):

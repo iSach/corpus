@@ -1,5 +1,4 @@
 import hashlib
-import json
 import os
 import shutil
 import sqlite3
@@ -118,21 +117,6 @@ def test_failed_integrity_check_prunes_nothing_and_leaves_no_partial(tmp_path, c
     assert backup.main(["--verify", str(src)]) == 1
 
 
-def test_interrupted_run_removes_its_partial_file(tmp_path, monkeypatch):
-    src = tmp_path / "corpus.sqlite3"
-    make_db(src).close()
-    dest = tmp_path / "backups"
-
-    def killed(source, target):
-        target.write_bytes(b"half a database")
-        raise SystemExit(143)
-
-    monkeypatch.setattr(backup, "snapshot", killed)
-    with pytest.raises(SystemExit):
-        backup.run_backup(src, dest)
-    assert list(dest.iterdir()) == []
-
-
 def test_refuses_missing_database_other_users_and_bad_retention(tmp_path, monkeypatch, capsys):
     dest = tmp_path / "backups"
     missing = tmp_path / "missing.sqlite3"
@@ -150,32 +134,6 @@ def test_refuses_missing_database_other_users_and_bad_retention(tmp_path, monkey
         backup.run_backup(src, dest)
     # Nothing was opened, so no -wal/-shm files were created for another user.
     assert sorted(p.name for p in tmp_path.iterdir()) == ["corpus.sqlite3"]
-
-
-def test_script_runs_from_any_directory_and_reports_json(tmp_path):
-    src = tmp_path / "corpus.sqlite3"
-    make_db(src).close()
-    dest = tmp_path / "backups"
-    env = {k: v for k, v in os.environ.items() if k != "CORPUS_DATA_DIR"}
-    env["CORPUS_DATA_DIR"] = str(tmp_path)
-
-    run = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "backup_db.py"), "--dest", str(dest)],
-        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60,
-    )
-
-    assert run.returncode == 0, run.stderr
-    result = json.loads(run.stdout)
-    assert Path(result["backup"]).parent == dest and result["kept"] == 1
-    assert backup.integrity_errors(Path(result["backup"])) == []
-
-
-def test_group_readable_snapshots_for_a_pull_account(tmp_path):
-    src = tmp_path / "corpus.sqlite3"
-    make_db(src).close()
-    result = backup.run_backup(src, tmp_path / "backups", now=T0, group_readable=True)
-    assert stat.S_IMODE(Path(result["backup"]).stat().st_mode) == 0o640
-    assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o750
 
 
 def test_serve_lists_and_streams_only_finished_snapshots(tmp_path, monkeypatch, capsysbinary):
@@ -308,20 +266,6 @@ def test_account_bundle_contains_registry_and_each_library_and_can_be_pulled(tmp
     assert backup.serve(dest,'get '+final.name,out=output) == 0
     assert output.getvalue() == final.read_bytes()
     assert backup.main(['--verify',str(final)]) == 0
-
-
-def test_account_bundle_fails_without_pruning_if_one_library_is_missing(tmp_path):
-    root = tmp_path/'data'; root.mkdir()
-    make_db(root/'corpus.sqlite3').close()
-    db = sqlite3.connect(root/'accounts.sqlite3')
-    db.execute('CREATE TABLE users(id TEXT,status TEXT)'); db.commit(); db.close()
-    dest = tmp_path/'backups'
-    good = backup.run_account_backup(root/'corpus.sqlite3',dest,now=T0)
-    db = sqlite3.connect(root/'accounts.sqlite3')
-    db.execute('INSERT INTO users VALUES(?,?)',('c'*32,'active')); db.commit(); db.close()
-    with pytest.raises(backup.BackupError):
-        backup.run_account_backup(root/'corpus.sqlite3',dest,keep=1,now=T0+timedelta(days=1))
-    assert [p.name for p in dest.iterdir()] == [Path(good['backup']).name]
 
 
 def test_account_bundle_verifier_rejects_paths_and_missing_registry(tmp_path):

@@ -5,7 +5,7 @@ from corpus.config import Settings
 from corpus.query import QueryError,compile_query
 from corpus.sources import MetadataFetchError
 
-TOPIC_FIELDS=[{'id':'sbi-pretrain','label':'SBI pretraining'},{'id':'diff-compose','label':'Diffusion composition'},{'id':'unfiled','label':'Unfiled'}]
+from helpers import TOPIC_FIELDS
 
 @pytest.mark.parametrize('query,facets',[(None,{}),([],{}),({},{}),('',[]),('',0),('',False),('',[['a']])])
 def test_nontext_queries_and_nondict_facets(query,facets):
