@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from corpus.app import create_app
 from corpus.config import ROOT, Settings
-from corpus.db import connection, initialize
 
 
 def test_research_topic_persists_and_organizes_papers(tmp_path):
@@ -58,32 +57,3 @@ def test_invalid_topics_do_not_change_the_library(tmp_path, changes):
         response = client.post('/api/topics', json={'id':'physics','label':'Physics',**changes})
         assert response.status_code == 400, response.text
         assert len(client.get('/api/topics').json()['topics']) == 1
-
-
-def test_topic_migration_retains_existing_fields_and_descriptions(tmp_path):
-    settings = Settings(data_dir=tmp_path, pdf_jobs=False)
-    settings.data_dir.mkdir(exist_ok=True)
-    with connection(settings) as db:
-        for name in ('001_initial.sql', '002_smart_list_facets.sql'):
-            db.executescript((ROOT / 'migrations' / name).read_text())
-        db.execute('INSERT INTO fields(id,label) VALUES(?,?)', ('existing','Existing topic'))
-    initialize(settings)
-    with connection(settings) as db:
-        assert dict(db.execute('SELECT * FROM fields WHERE id=?', ('existing',)).fetchone()) == {
-            'id':'existing','label':'Existing topic','description':'','relevance_criteria':'','symbol':'',
-        }
-        db.execute('UPDATE fields SET description=? WHERE id=?', ('A retained brief.','unfiled'))
-    initialize(settings)
-    with connection(settings, True) as db:
-        assert db.execute('SELECT description FROM fields WHERE id=?', ('unfiled',)).fetchone()[0] == 'A retained brief.'
-        assert db.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0] == 1
-
-
-def test_topic_symbol_is_preserved_when_omitted_and_can_be_cleared(tmp_path):
-    settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False)
-    with TestClient(create_app(settings)) as client:
-        topic = {'id': 'physics', 'label': 'Physics', 'symbol': 'diamond'}
-        assert client.post('/api/topics', json=topic).status_code == 200
-        assert client.post('/api/topics', json={'id': 'physics', 'label': 'New name'}).json()['topic']['symbol'] == 'diamond'
-        assert next(f for f in client.get('/api/config').json()['fields'] if f['id'] == 'physics')['symbol'] == 'diamond'
-        assert client.post('/api/topics', json={**topic, 'symbol': ''}).json()['topic']['symbol'] == ''

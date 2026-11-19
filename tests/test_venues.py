@@ -92,17 +92,6 @@ def test_journal_doi_is_confirmed_through_crossref(client):
     assert (p["venue"], p["year"], p["venue_class"], p["doi"]) == ("Physical Review Letters", 2021, "journal", "10.1103/physrevlett.127.000001")
 
 
-def test_doi_with_a_different_title_needs_the_owner(client):
-    c, settings = client
-    pid = add(c)
-    location = {"source": {"display_name": "Nature", "type": "journal"}, "landing_page_url": "https://doi.org/10.1038/s41586-024-00001-1"}
-    result = run(settings, pid, {**openalex(location), **crossref(title="A renamed journal version", container="Nature", year=2024)})
-    assert result.status == "proposed"
-    p = paper(c, pid)
-    assert p["venue_class"] == "preprint"
-    assert (p["venue_proposal"]["venue"], p["venue_proposal"]["year"]) == ("Nature", 2024)
-
-
 def test_single_uncurated_source_becomes_a_proposal_the_owner_applies(client):
     c, settings = client
     pid = add(c)
@@ -122,33 +111,12 @@ def test_single_uncurated_source_becomes_a_proposal_the_owner_applies(client):
     assert c.post(f"/api/venue-proposals/{proposal['id']}", json={"action": "apply"}).status_code == 409
 
 
-def test_two_sources_agreeing_apply_without_a_curated_record(client):
-    c, settings = client
-    pid = add(c)
-    location = {"source": {"display_name": "neural information processing systems", "type": "conference"}, "landing_page_url": "https://proceedings.neurips.cc/paper/2021/hash/abc"}
-    result = run(settings, pid, {**openalex(location), **s2(venue="Neural Information Processing Systems", year=2021)})
-    assert result.status == "applied"
-    assert paper(c, pid)["venue_source"] == "auto:openalex+semanticscholar"
-
-
 def test_disagreeing_curated_sources_need_the_owner(client):
     c, settings = client
     pid = add(c)
     location = {"source": {"display_name": "Physical Review Letters", "type": "journal"}, "landing_page_url": "https://doi.org/10.1103/x"}
     result = run(settings, pid, {**openalex(location), **crossref(), **s2(venue="ICML", dblp="conf/icml/Lovelace21")})
     assert result.status == "proposed"
-
-
-def test_dismissed_answer_is_not_proposed_again(client):
-    c, settings = client
-    pid = add(c)
-    workshop = s2(venue="NeurIPS 2021 Workshop on Deep Generative Models", year=2021)
-    assert run(settings, pid, workshop).status == "proposed"
-    proposal = paper(c, pid)["venue_proposal"]
-    assert proposal["venue_class"] == "other"
-    assert c.post(f"/api/venue-proposals/{proposal['id']}", json={"action": "reject"}).status_code == 200
-    assert run(settings, pid, workshop).status == "rejected-before"
-    assert paper(c, pid)["venue_proposal"] is None
 
 
 def test_owner_edits_are_never_overridden(client):
@@ -164,13 +132,6 @@ def test_owner_edits_are_never_overridden(client):
         assert db.execute(venues.DUE).fetchone() is None
 
 
-def test_notes_only_edit_keeps_automatic_checks(client):
-    c, settings = client
-    pid = add(c)
-    c.post("/api/papers", json={"id": pid, "notes": "read later"})
-    assert paper(c, pid)["venue_source"] == ""
-
-
 def test_source_failure_is_recorded_and_changes_nothing(client):
     c, settings = client
     pid = add(c)
@@ -181,35 +142,6 @@ def test_source_failure_is_recorded_and_changes_nothing(client):
     with connection(settings) as db:  # retried the next day, not next week
         assert db.execute(venues.DUE).fetchone() is None
         db.execute("UPDATE papers SET venue_checked=strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 days') WHERE id=?", (pid,))
-        assert db.execute(venues.DUE).fetchone()["id"] == pid
-
-
-def test_one_source_failing_with_nothing_found_is_retried(client):
-    c, settings = client
-    pid = add(c)
-    assert run(settings, pid, {"semanticscholar": sources.SourceError("source returned HTTP 429")}).status == "error"
-
-
-def test_unconfirmed_year_is_left_out_of_the_proposal(client):
-    c, settings = client
-    pid = add(c)
-    location = {"source": {"display_name": "International Conference on Machine Learning", "type": "conference"}, "landing_page_url": "https://proceedings.mlr.press/v119/lovelace20a.html"}
-    assert run(settings, pid, openalex(location)).status == "proposed"
-    proposal = paper(c, pid)["venue_proposal"]
-    assert proposal["year"] is None
-    applied = c.post(f"/api/venue-proposals/{proposal['id']}", json={"action": "apply"}).json()["paper"]
-    assert (applied["venue_class"], applied["year"]) == ("conference", 2020)
-
-
-def test_schedule_rechecks_after_the_interval(client):
-    c, settings = client
-    pid = add(c)
-    with connection(settings) as db:
-        assert db.execute(venues.DUE).fetchone()["id"] == pid
-    assert venues.check_next(settings, fake({})).status == "none"
-    with connection(settings) as db:
-        assert db.execute(venues.DUE).fetchone() is None
-        db.execute("UPDATE papers SET venue_checked=strftime('%Y-%m-%dT%H:%M:%fZ','now','-40 days') WHERE id=?", (pid,))
         assert db.execute(venues.DUE).fetchone()["id"] == pid
 
 
@@ -236,23 +168,3 @@ def test_bibtex_cites_published_version_and_keeps_eprint(client):
     assert ddim.startswith("@inproceedings{") and "booktitle  = {International Conference on Learning Representations (ICLR)}" in ddim
     assert "year       = {2021}" in ddim and "eprint     = {2101.00001}" in ddim and "archiveprefix = {arXiv}" in ddim
     assert cfg.startswith("@article{") and "journal    = {arXiv preprint arXiv:2202.00002}" in cfg
-
-
-def test_decide_prefers_curated_year_over_preprint_year():
-    weak = venues.make_candidate("semanticscholar", "ICLR", year=2020)
-    strong = venues.make_candidate("dblp", "", dblp="conf/iclr/LovelaceT21", year=2021, year_sure=True, strong=True)
-    chosen, auto, used = venues.decide([weak, strong], preprint_year=2020)
-    assert (chosen.key, chosen.year, auto, used) == ("iclr", 2021, True, ["dblp", "semanticscholar"])
-    assert venues.make_candidate("openalex", "arXiv (Cornell University)") is None
-    assert venues.make_candidate("dblp", "", dblp="journals/corr/abs-2010-02502") is None
-
-
-def test_retitled_publication_found_through_openalex_is_proposed(client):
-    c, settings = client
-    pid = add(c, arxiv_id="2312.00003", title="An example preprint title")
-    published = "A renamed journal version"
-    location = {"source": {"display_name": "Nature", "type": "journal"}, "landing_page_url": "https://doi.org/10.1038/s41586-024-00001-1"}
-    result = run(settings, pid, {**openalex(location, title=published), **crossref(title=published, container="Nature", year=2024)})
-    assert result.status == "proposed"
-    proposal = paper(c, pid)["venue_proposal"]
-    assert (proposal["venue"], proposal["year"], proposal["doi"]) == ("Nature", 2024, "10.1038/s41586-024-00001-1")

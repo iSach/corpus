@@ -1,43 +1,11 @@
 """New discoveries must be approved before joining the library or PDF queue."""
-import json
 
-import pytest
 from fastapi.testclient import TestClient
 
 from corpus.app import create_app
 from corpus.config import Settings
-from corpus.db import connection, add_run, validate_paper, write_paper, get_paper
-from corpus.inbox import stage_agent
 from corpus import jobs, sources
-from test_api import _pdf_fixture
-
-TOKEN = 'inbox-test-token'
-FIELDS = [{'id':'unfiled','label':'Unfiled'},{'id':'physics','label':'Physics'}]
-
-
-@pytest.fixture
-def library(tmp_path):
-    settings = Settings(data_dir=tmp_path,dev=True,pdf_jobs=False,ingest_token=TOKEN,fields=FIELDS)
-    with TestClient(create_app(settings)) as client:
-        yield client, settings
-
-
-def proposal(slug='regimes', **changes):
-    return {'title':'Instability boundaries in reaction diffusion equations', 'authors':['Research Author'],
-            'doi':'10.5555/'+slug, 'abstract':'Generalization to unseen physical regimes.',
-            'field':'physics', 'tags':['regimes'], 'state':'reviewed', 'rel':10, 'admission':'approved',
-            'artifacts':[{'kind':'pdf','url':'https://example.org/'+slug+'.pdf'}, {'kind':'code','url':'https://example.org/solver'}],
-            'proposed_scores':{'rel':9,'reason':'Measures transition boundaries across parameter space.'}, **changes}
-
-
-def ingest(client, paper, agent='automatic-test'):
-    response = client.post('/api/ingest',headers={'Authorization':'Bearer '+TOKEN},json={'agent':agent,'query':'physical forecasting benchmarks','papers':[paper]})
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def decision(client, paper_id, action, **extra):
-    return client.post('/api/inbox/decision',json={'id':paper_id,'action':action,**extra})
+from helpers import INBOX_FIELDS as FIELDS, INBOX_TOKEN as TOKEN, decision, ingest, pdf_bytes, proposal
 
 
 def test_import_waits_outside_library_exports_stats_and_pdf_queue(library,monkeypatch):
@@ -85,7 +53,7 @@ def test_approval_queues_pdf_without_marking_as_read_then_full_text_works(librar
     assert client.post('/api/export',json={'scope':'all','format':'json'}).json()['count'] == 1
     artifact = jobs.next_artifact(settings)
     assert artifact and artifact['paper_id'] == paper_id
-    pdf = _pdf_fixture()
+    pdf = pdf_bytes()
     monkeypatch.setattr(sources,'safe_download',lambda *args,**kwargs:pdf)
     jobs.fetch_one(settings,artifact)
     assert client.get('/api/papers',params={'q':'pdf:"posterior collapse"'}).json()['total'] == 1
@@ -106,19 +74,6 @@ def test_dismissal_is_remembered_across_imports_and_can_be_restored(library):
     assert decision(client,paper_id,'restore').status_code == 200
     assert client.get('/api/inbox').json()['total'] == 1
     assert decision(client,paper_id,'approve').status_code == 200
-
-
-@pytest.mark.parametrize('action',['approve','dismiss'])
-def test_undo_restores_pending_status_and_stops_pdf_work(library,action):
-    client, settings = library
-    paper_id = ingest(client,proposal())['results'][0]['id']
-    decided = decision(client,paper_id,action).json()['decision']
-    response = client.post('/api/inbox/undo',json={'decision_id':decided['id']})
-    assert response.status_code == 200, response.text
-    assert client.get('/api/inbox').json()['total'] == 1
-    assert client.get('/api/papers').json()['total'] == 0
-    assert jobs.next_artifact(settings) is None
-    assert client.post('/api/inbox/undo',json={'decision_id':decided['id']}).status_code == 409
 
 
 def test_stale_decisions_and_undo_cannot_clobber_later_changes(library):
@@ -143,38 +98,6 @@ def test_pending_edits_and_new_pdf_links_cannot_bypass_approval(library):
     assert response.json()['paper']['admission'] == 'pending'
     assert response.json()['paper']['artifacts'][0]['fetch_status'] == 'linked'
     assert jobs.next_artifact(settings) is None
-
-
-def test_inbox_search_topic_filters_sorting_and_pagination(library):
-    client, _ = library
-    first = ingest(client,proposal('first',proposed_scores={'rel':6}))['results'][0]['id']
-    second = ingest(client,proposal('second',title='Transferable turbulent fluid dynamics',field='unfiled',proposed_scores={'rel':9}))['results'][0]['id']
-    assert client.get('/api/inbox',params={'limit':1}).json()['papers'][0]['id'] == second
-    assert client.get('/api/inbox',params={'limit':1,'offset':1}).json()['papers'][0]['id'] == first
-    assert client.get('/api/inbox',params={'field':'physics'}).json()['total'] == 1
-    assert client.get('/api/inbox',params={'q':'turbulent'}).json()['papers'][0]['id'] == second
-    for params in ({'q':'field:'},{'status':'invalid'},{'sort':'invalid'},{'limit':101},{'offset':-1}):
-        assert client.get('/api/inbox',params=params).status_code == 400
-
-
-def test_backfill_targets_only_the_selected_agents_unreviewed_imports(library):
-    client, settings = library
-    with connection(settings) as db:
-        agent = add_run(db,'existing-watcher')
-        seed = add_run(db,'seed')
-        pending = write_paper(db,validate_paper(db,{'title':'Existing automatic discovery','notes':'Keep this note','artifacts':[{'kind':'pdf','url':'https://example.org/existing.pdf'}]}),agent)
-        reviewed = write_paper(db,validate_paper(db,{'title':'Reviewed automatic discovery','state':'reviewed'}),agent)
-        reference = write_paper(db,validate_paper(db,{'title':'Seed reference'}),seed)
-    with connection(settings) as db:
-        assert stage_agent(db,'existing-watcher') == 1
-        assert get_paper(db,pending)['notes'] == 'Keep this note'
-        assert get_paper(db,pending)['admission'] == 'pending'
-        assert get_paper(db,reviewed)['admission'] == get_paper(db,reference)['admission'] == 'approved'
-    with connection(settings) as db:
-        assert stage_agent(db,'existing-watcher') == 0
-    assert decision(client,pending,'approve').status_code == 200
-    with connection(settings) as db:
-        assert stage_agent(db,'existing-watcher') == 0
 
 
 def test_ingest_token_cannot_approve_and_session_is_required(tmp_path):

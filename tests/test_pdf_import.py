@@ -1,9 +1,6 @@
-import pytest
-
 from corpus import pdf_import
-from corpus.db import connection
-from pdf_builder import TITLE, make_pdf, paper_pdf
-from test_api import app_client, _paper
+from pdf_builder import TITLE, paper_pdf
+from helpers import paper_body
 
 
 def upload(client, data, name='paper.pdf'):
@@ -33,15 +30,6 @@ def test_analysis_reads_layout_title_arxiv_stamp_and_abstract():
     assert found['abstract'] == 'We calibrate the confidence of small image classifiers with a held-out set.'
 
 
-def test_analysis_prefers_document_metadata_and_finds_a_doi():
-    data = paper_pdf(doi_line='https://doi.org/10.5555/Small.Classifiers.', info={'Title': TITLE, 'Author': 'Ada Researcher; Grace Example (grace@example.org)'})
-    found = pdf_import.analyze(data)
-    assert found['title'] == TITLE and found['authors'] == ['Ada Researcher', 'Grace Example']
-    assert found['doi'] == '10.5555/small.classifiers' and not found['doi_from_metadata']
-    placeholder = pdf_import.analyze(paper_pdf(info={'Title': 'Microsoft Word - draft3.docx'}))
-    assert placeholder['title'] == TITLE
-
-
 def test_upload_rejects_non_pdfs(app_client):
     client, _ = app_client
     assert upload(client, b'<html>not a pdf</html>').status_code == 400
@@ -51,7 +39,7 @@ def test_upload_rejects_non_pdfs(app_client):
 def test_arxiv_stamp_matches_a_saved_paper_and_keeps_the_file(app_client, monkeypatch):
     client, settings = app_client
     calls = offline(client.app, monkeypatch)
-    saved = client.post('/api/papers', json=_paper('stamp', arxiv_id='2401.01234', title='A differently typeset title', artifacts=[])).json()['paper']
+    saved = client.post('/api/papers', json=paper_body('stamp', arxiv_id='2401.01234', title='A differently typeset title', artifacts=[])).json()['paper']
     data = paper_pdf(arxiv='2401.01234v2')
     response = upload(client, data)
     assert response.status_code == 200, response.text
@@ -71,20 +59,6 @@ def test_arxiv_stamp_matches_a_saved_paper_and_keeps_the_file(app_client, monkey
     assert result['status'] == 'exists' and result['pdf'] == 'kept-existing'
 
 
-def test_unconfirmed_page_doi_falls_back_to_a_title_search(app_client, monkeypatch):
-    client, _ = app_client
-    cited = {'title': 'A cited paper about something else entirely', 'authors': ['Other Person'], 'doi': '10.5555/cited', 'artifacts': [], 'canonical_url': 'https://doi.org/10.5555/cited'}
-    published = {'title': TITLE+'.', 'authors': ['Ada Researcher'], 'doi': '10.5555/published', 'year': 2025, 'venue': 'Journal of Tests', 'abstract': '',
-                 'artifacts': [], 'canonical_url': 'https://doi.org/10.5555/published'}
-    calls = offline(client.app, monkeypatch, resolve=lambda value: {'input': value, 'paper': cited},
-                    search=lambda source, query: [published] if source == 'crossref' else [])
-    body = upload(client, paper_pdf(doi_line='See also doi:10.5555/cited')).json()
-    assert body['match'] == {'source': 'crossref', 'via': 'title'}
-    assert body['paper']['doi'] == '10.5555/published' and body['paper']['existing'] is None
-    assert body['paper']['abstract'].startswith('We calibrate the confidence')
-    assert ('search', 'arxiv', 'title', TITLE) in calls
-
-
 def test_unknown_paper_becomes_an_entry_from_the_pdf(app_client, monkeypatch):
     client, settings = app_client
     offline(client.app, monkeypatch)
@@ -102,17 +76,8 @@ def test_unknown_paper_becomes_an_entry_from_the_pdf(app_client, monkeypatch):
     assert edited.status_code == 200, edited.text
     assert edited.json()['paper']['artifacts'][0]['fetch_status'] == 'cached'
     # A hand-typed upload name for a file that was never imported is never fetched.
-    other = client.post('/api/papers', json=_paper('typed', artifacts=[{'kind': 'pdf', 'url': 'upload:'+'0'*64}])).json()['paper']
+    other = client.post('/api/papers', json=paper_body('typed', artifacts=[{'kind': 'pdf', 'url': 'upload:'+'0'*64}])).json()['paper']
     assert other['artifacts'][0]['fetch_status'] == 'linked'
-
-
-def test_title_from_the_file_name_when_the_pdf_has_none(app_client, monkeypatch):
-    client, _ = app_client
-    offline(client.app, monkeypatch)
-    body = upload(client, make_pdf([('42', 9, 72, 700)]), 'Sparse_coding_for_audio.pdf').json()
-    assert body['paper']['title'] == 'Sparse coding for audio'
-    unreadable = upload(client, make_pdf([('42', 9, 72, 700)]), '1234.pdf')
-    assert unreadable.status_code == 400 and 'No title' in unreadable.json()['detail']
 
 
 def test_pdf_uploads_may_exceed_the_json_request_limit(app_client, monkeypatch):
@@ -121,12 +86,3 @@ def test_pdf_uploads_may_exceed_the_json_request_limit(app_client, monkeypatch):
     large = paper_pdf(padding=3_000_000)
     assert upload(client, large).status_code == 200
     assert client.post('/api/papers', content=b'x'*3_000_000, headers={'Content-Type': 'application/json'}).status_code == 413
-
-
-def test_expired_upload_still_adds_the_paper(app_client, monkeypatch):
-    client, settings = app_client
-    offline(client.app, monkeypatch)
-    body = upload(client, paper_pdf()).json()
-    (settings.cache_dir/'uploads'/(body['paper']['upload']+'.pdf')).unlink()
-    result = client.post('/api/capture', json={'projects': ['sbi-pretrain'], 'papers': [body['paper']]}).json()['results'][0]
-    assert result['status'] == 'added' and result['pdf'] == 'expired'

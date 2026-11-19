@@ -3,7 +3,7 @@ from corpus.query import Parser, QueryError, compile_query
 from corpus.config import Settings
 from corpus.db import initialize,connection,validate_paper,add_run,write_paper,search,get_paper
 
-TOPIC_FIELDS=[{'id':'sbi-pretrain','label':'SBI pretraining'},{'id':'diff-compose','label':'Diffusion composition'},{'id':'unfiled','label':'Unfiled'}]
+from helpers import TOPIC_FIELDS
 
 def test_precedence_and_implicit_and():
     a=Parser('a OR b AND NOT c d').parse()
