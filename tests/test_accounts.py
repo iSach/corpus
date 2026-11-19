@@ -157,6 +157,36 @@ def test_owner_ingest_token_always_targets_owner_even_with_member_cookie(site):
     assert member.post('/api/ingest',json={'papers':[{'title':'Wrong token'}]}).status_code == 401
 
 
+def test_personal_ingest_tokens_target_their_own_library_and_can_be_revoked(site):
+    app, admin, _ = site
+    member, user = join(app, invitation(admin))
+    anonymous = TestClient(app, base_url=ORIGIN)
+    assert anonymous.post('/api/account/ingest-token').status_code == 401
+    assert member.get('/api/account/ingest-token').json() == {'exists': False, 'created': None}
+    created = member.post('/api/account/ingest-token').json()
+    secret = created['token']
+    assert created['exists'] and secret.startswith('cps_')
+    assert 'token' not in member.get('/api/account/ingest-token').json(), 'the secret is shown only once'
+    with account_module.Accounts.registry(app.state.accounts) as db:
+        assert secret not in str(db.execute('SELECT * FROM ingest_tokens').fetchall()), 'only a hash is stored'
+
+    def send(token, title):
+        return anonymous.post('/api/ingest', headers={'Authorization': 'Bearer ' + token}, json={'papers': [{'title': title}]})
+    assert send(secret, 'Member paper').status_code == 200
+    assert member.get('/api/inbox').json()['total'] == 1
+    assert admin.get('/api/inbox').json()['total'] == 0, 'a member token never writes to the owner library'
+    assert send('cps_' + 'x' * 43, 'Guess').status_code == 401
+
+    replaced = member.post('/api/account/ingest-token').json()['token']
+    assert send(secret, 'Old').status_code == 401 and send(replaced, 'New').status_code == 200
+    assert member.delete('/api/account/ingest-token').json()['exists'] is False
+    assert send(replaced, 'Revoked').status_code == 401
+
+    again = member.post('/api/account/ingest-token').json()['token']
+    admin.post(f"/api/admin/accounts/{user['id']}/status", json={'status': 'disabled'})
+    assert send(again, 'Disabled').status_code == 401
+
+
 def test_member_login_disable_and_recovery_revoke_sessions_and_keep_library(site):
     app, admin, _ = site
     member, user = join(app,invitation(admin))

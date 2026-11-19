@@ -137,7 +137,8 @@ def create_app(settings=None):
         agent_route = path=='/api/ingest' or (path in ('/api/review/work','/api/review/text','/api/review/assessments') and bool(request.headers.get('authorization')))
         if agent_route:
             supplied=request.headers.get('authorization','')
-            if not hmac.compare_digest(supplied,'Bearer '+owner_settings.ingest_token): return JSONResponse({'detail':'A valid ingest Bearer token is required'},status_code=401)
+            # The shared server token targets the owner library; a personal token targets its account's library.
+            if not hmac.compare_digest(supplied,'Bearer '+owner_settings.ingest_token) and not accounts.ingest_token_user(supplied): return JSONResponse({'detail':'A valid ingest Bearer token is required'},status_code=401)
         elif path.startswith('/api/') and not public and not authenticated(request):
             return JSONResponse({'detail':'Sign in to Corpus'},status_code=401)
         if request.method not in ('GET','HEAD','OPTIONS') and not agent_route:
@@ -156,6 +157,7 @@ def create_app(settings=None):
         user=accounts.session_user(request)
         agent_route=path=='/api/ingest' or (path in ('/api/review/work','/api/review/text','/api/review/assessments') and bool(request.headers.get('authorization')))
         user_id=user['id'] if user and not agent_route else 'owner'
+        if agent_route: user_id=accounts.ingest_token_user(request.headers.get('authorization','')) or 'owner'
         if path=='/api/config' and not user and request.query_params.get('email'):
             selected=accounts.by_email(request.query_params['email'])
             if selected and selected['status']=='active': user_id=selected['id']

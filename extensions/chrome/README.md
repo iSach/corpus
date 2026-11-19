@@ -15,7 +15,7 @@ No build step: plain JavaScript, loaded as-is.
 In **Options**, enter:
 
 - **Corpus address**: your instance's origin, e.g. `https://corpus.example` (plain `http://` is accepted only for `localhost`).
-- **Ingest token**: the server's ingest Bearer token. It is the value of `CORPUS_INGEST_TOKEN` if you set one, otherwise the contents of `ingest-token` in the server's data directory (see [docs/paper-watch.md](../../docs/paper-watch.md)).
+- **Ingest token**: your personal token. Sign in to Corpus, open **Account → Browser extension** and choose **Generate token**; it is shown once, and saves go into *your* library's Inbox. (The server-wide ingest token also works, but it always saves to the administrator's library.) The server-wide token is `CORPUS_INGEST_TOKEN` if set, otherwise the contents of `ingest-token` in the data directory (see [docs/paper-watch.md](../../docs/paper-watch.md)).
 
 Saving the options asks Chrome for permission to reach **only your Corpus origin**. The extension never requests `<all_urls>`; it reads the current tab only when you click the toolbar button (`activeTab` + `scripting`).
 

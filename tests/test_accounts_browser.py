@@ -58,6 +58,14 @@ def test_admin_invites_friend_who_sets_password_and_gets_private_library(account
         friend.locator('#password').fill('friend-private-password')
         friend.get_by_role('button',name='ENTER',exact=True).click()
         expect(friend.get_by_role('heading',name='Your account')).to_be_visible()
+        friend.get_by_role('button',name='GENERATE TOKEN',exact=True).click()
+        secret = friend.locator('#ingest-token-value').input_value()
+        assert secret.startswith('cps_')
+        saved = friend.request.post(account_site+'/api/ingest',headers={'Authorization':'Bearer '+secret},data={'papers':[{'title':'Saved from the extension'}]})
+        assert saved.json()['queued'] == 1
+        friend.once('dialog', lambda dialog: dialog.accept())
+        friend.get_by_role('button',name='REVOKE',exact=True).click()
+        expect(friend.get_by_role('button',name='GENERATE TOKEN',exact=True)).to_be_visible()
         expect(friend.get_by_role('heading',name='Passkeys')).to_be_visible()
         friend.get_by_label('THEME').select_option('oled')
         assert friend.locator('html').get_attribute('data-theme') == 'oled'
