@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Corpus: Save paper",
+  "version": "0.1.0",
+  "description": "Save the paper on the current page to your self-hosted Corpus library.",
+  "minimum_chrome_version": "110",
+  "action": {
+    "default_title": "Save to Corpus",
+    "default_popup": "popup/popup.html",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "options_ui": { "page": "options/options.html", "open_in_tab": true },
+  "background": { "service_worker": "background/service-worker.js", "type": "module" },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
+}

@@ -278,6 +278,19 @@ def create_app(settings=None):
         if not isinstance(items,list) or not 1<=len(items)<=100: raise ValueError('papers must contain 1–100 proposals')
         agent=body.get('agent',body.get('agent_identifier','ingest-agent')); query=body.get('query','')
         if not isinstance(agent,str) or not agent.strip() or len(agent)>200 or not isinstance(query,str) or len(query)>4000: raise ValueError('Invalid agent or query')
+        # Items that carry only an `identifier` (URL, DOI or arXiv id) are resolved
+        # server-side first, outside the write transaction, so the network lookup
+        # never holds the database lock. The browser extensions use this.
+        resolve_errors={}
+        for i,item in enumerate(items):
+            if isinstance(item,dict) and not item.get('title') and 'identifier' in item:
+                try:
+                    ident=item['identifier']
+                    if not isinstance(ident,str) or not 1<=len(ident.strip())<=3000: raise ValueError('identifier must be a link, DOI or arXiv id')
+                    found=fetch_metadata(ident.strip())
+                    items[i]={**{k:v for k,v in item.items() if k!='identifier'},**{k:v for k,v in found.items() if k not in item or not item[k]}}
+                except (ValueError,MetadataFetchError) as e: resolve_errors[i]=str(e)[:300]
+                except Exception as e: resolve_errors[i]='Metadata source unavailable: '+str(e)[:300]
         with connection(settings) as db:
             db.execute('BEGIN IMMEDIATE')
             run=add_run(db,agent,query,len(items),body.get('extra',{}))
@@ -285,6 +298,7 @@ def create_app(settings=None):
             for i,item in enumerate(items):
                 db.execute('SAVEPOINT ingest_item')
                 try:
+                    if i in resolve_errors: raise ValueError(resolve_errors[i])
                     p=validate_paper(db,item,ingest=True)
                     item_query=item.get('query',query)
                     if not isinstance(item_query,str) or len(item_query)>4000: raise ValueError('Item query must be text under 4,000 characters')
