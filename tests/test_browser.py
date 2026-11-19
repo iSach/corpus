@@ -69,6 +69,38 @@ def test_slow_query_typing_preserves_focus_and_pdf_hits(page):
     assert page.locator('.detail-pane script').count()==0
 
 
+def test_topic_facets_show_overlap_with_ticked_topics(page):
+    page.get_by_role('link',name='Add',exact=True).click()
+    page.get_by_role('button',name='Manual entry',exact=True).click()
+    page.locator('#form-title').fill('Delta shared between topics')
+    topics=page.get_by_role('group',name='Paper topics')
+    topics.get_by_role('checkbox',name='SBI pretraining',exact=True).check()
+    topics.get_by_role('checkbox',name='Diffusion composition',exact=True).check()
+    page.get_by_role('button',name='SAVE',exact=True).click()
+    expect(page.locator('.detail-title')).to_have_text('Delta shared between topics')
+    page.get_by_role('link',name='Library',exact=True).click()
+    expect(page.locator('.paper-row')).to_have_count(4)
+    rail=page.locator('.facet-rail')
+    sbi=rail.locator('.facet-option',has_text='SBI pretraining')
+    diff=rail.locator('.facet-option',has_text='Diffusion composition')
+    unfiled=rail.locator('.facet-option',has_text='Unfiled')
+    expect(sbi.locator('.facet-count')).to_have_text('3')
+    expect(diff.locator('.facet-count')).to_have_text('2')
+    diff.locator('input').check()
+    expect(page.locator('.paper-row')).to_have_count(2)
+    # The ticked topic keeps its plain count; others show how many of their papers it shares.
+    expect(diff.locator('.facet-count')).to_have_text('2')
+    expect(sbi.locator('.facet-count')).to_have_text('1 / 3')
+    expect(sbi).to_have_attribute('title','1 of 3 papers match the current filters')
+    expect(sbi).not_to_have_class('facet-option facet-option-empty')
+    expect(unfiled).to_have_class('facet-option facet-option-empty')
+    expect(unfiled).to_have_attribute('title','No matching papers')
+    diff.locator('input').uncheck()
+    expect(page.locator('.paper-row')).to_have_count(4)
+    expect(sbi.locator('.facet-count')).to_have_text('3')
+    expect(sbi).to_have_attribute('title','')
+
+
 def test_keyboard_view_and_palette(page):
     first=page.locator('.paper-row.selected').get_attribute('data-id')
     page.locator('.paper-row.selected').click()
