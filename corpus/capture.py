@@ -1,15 +1,17 @@
 """Interactive, additive capture: one paper can be filed in several projects."""
 import json
 import re
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
-from .db import connection, add_run, validate_paper, write_paper, find_duplicate, get_paper
+from .db import connection, add_run, validate_paper, write_paper, find_duplicate, get_paper, IDENTIFIERS
 from .catalog import Catalog, CatalogBusy, CatalogQueryError
 from .query import fts_literal
+from . import pdf_import
 
 
 def metadata_from_library(db,paper_id):
-    row=db.execute('SELECT id,title,authors,venue,year,abstract,canonical_url,doi,arxiv_id FROM papers WHERE id=?',(paper_id,)).fetchone()
+    row=db.execute('SELECT id,title,authors,venue,venue_class,year,abstract,canonical_url,doi,arxiv_id,openreview_id FROM papers WHERE id=?',(paper_id,)).fetchone()
     paper=dict(row); paper['authors']=json.loads(paper['authors'])
     paper['artifacts']=[dict(r) for r in db.execute('SELECT kind,url FROM artifacts WHERE paper_id=?',(paper_id,))]
     return paper
@@ -22,7 +24,7 @@ def annotate(db, papers):
             row=db.execute('SELECT id,admission FROM papers WHERE id=?',(paper['id'],)).fetchone()
             if row:
                 existing={'id':row['id'],'admission':row['admission'],'projects':[r[0] for r in db.execute('SELECT field_id FROM paper_projects WHERE paper_id=?',(row['id'],))]}
-        for key in ('doi','arxiv_id'):
+        for key in IDENTIFIERS:
             if existing: break
             if paper.get(key):
                 row=db.execute('SELECT id,admission FROM papers WHERE '+key+'=?',(paper[key],)).fetchone()
@@ -38,7 +40,7 @@ def capture_one(db, metadata, projects, run_id, query, threshold=.91):
     if not isinstance(metadata,dict): raise ValueError('Each selection must be a paper')
     for flag in ('allow_similar','admit_existing'):
         if flag in metadata and type(metadata[flag]) is not bool: raise ValueError(flag+' must be boolean')
-    keep=('title','authors','venue','year','abstract','canonical_url','doi','arxiv_id','artifacts')
+    keep=('title','authors','venue','venue_class','year','abstract','canonical_url','doi','arxiv_id','openreview_id','artifacts')
     incoming={key:metadata[key] for key in keep if key in metadata}
     incoming.update(projects=projects,field=projects[0],state='unreviewed')
     paper=validate_paper(db,incoming)
@@ -108,7 +110,9 @@ def install_routes(app,settings,limits):
             for index,value in enumerate(identifiers):
                 try:
                     kind,identifier=catalog.identify(value)
-                    key='doi' if kind=='doi' else 'arxiv_id'
+                    key={'doi':'doi','arxiv':'arxiv_id','openreview':'openreview_id'}.get(kind)
+                    if not key:
+                        missing.append(index); continue
                     requested=re.search(r'v\d+$',identifier) if kind=='arxiv' else None
                     identifier=re.sub(r'v\d+$','',identifier) if kind=='arxiv' else identifier
                     row=db.execute('SELECT id,canonical_url FROM papers WHERE '+key+'=?',(identifier,)).fetchone()
@@ -128,6 +132,34 @@ def install_routes(app,settings,limits):
         with connection(settings,True) as db:
             annotate(db,[row['paper'] for row in results if row.get('paper')])
         return {'results':results}
+
+    def import_pdf_sync(data,name):
+        found=pdf_import.analyze(data,name)
+        with connection(settings) as db:
+            upload=pdf_import.stage(settings,db,data)
+        with connection(settings,True) as db:
+            paper,source,via,notes=pdf_import.identify(settings,db,catalog,found,metadata_from_library,settings.dedupe_threshold)
+        if paper is None:
+            if not found['title']: raise ValueError('No title could be read from this PDF. Add it by hand instead.')
+            paper=pdf_import.from_pdf(found)
+        else:
+            for key in ('abstract','year'):
+                if not paper.get(key) and found.get(key): paper[key]=found[key]
+            if not paper.get('authors') and found['authors']: paper['authors']=found['authors']
+        paper['upload']=upload
+        with connection(settings,True) as db: annotate(db,[paper])
+        return {'paper':paper,'match':{'source':source,'via':via},'notes':notes,'pages':found['pages']}
+
+    @app.post('/api/catalog/pdf')
+    async def import_pdf(request:Request,name:str=''):
+        if not limits.allow('pdf-import',30,60): raise HTTPException(429,'Please pause briefly before importing more PDFs')
+        if len(name)>300: raise ValueError('File name is too long')
+        kind=request.headers.get('content-type','').split(';')[0].strip().lower()
+        if kind not in ('application/pdf','application/octet-stream','application/x-pdf'): raise HTTPException(415,'Upload the PDF file itself')
+        data=await request.body()
+        if not data: raise ValueError('The PDF is empty')
+        if len(data)>settings.pdf_max_bytes: raise HTTPException(413,'PDF exceeds the upload limit')
+        return await run_in_threadpool(import_pdf_sync,data,name)
 
     @app.post('/api/capture')
     def save(body:dict):
@@ -149,6 +181,9 @@ def install_routes(app,settings,limits):
                 db.execute('SAVEPOINT capture_item')
                 try:
                     result=capture_one(db,metadata,projects,run,query,settings.dedupe_threshold)
+                    if isinstance(metadata,dict) and metadata.get('upload') and result.get('paper'):
+                        result['pdf']=pdf_import.attach(settings,db,result['paper']['id'],metadata['upload'])
+                        if result['pdf']=='attached': result['paper']=get_paper(db,result['paper']['id'])
                     db.execute('RELEASE capture_item')
                     results.append({'index':index,**result})
                 except ValueError as error:

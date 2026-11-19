@@ -16,6 +16,14 @@ class Settings:
     sql_local_only: bool = field(default_factory=lambda: os.getenv('CORPUS_SQL_LOCAL_ONLY','0')=='1')
     secure_cookie: bool = field(default_factory=lambda: os.getenv('CORPUS_SECURE_COOKIE','0')=='1')
     passkey_origin: str = field(default_factory=lambda: os.getenv('CORPUS_PASSKEY_ORIGIN',''))
+    public_origin: str = field(default_factory=lambda: os.getenv('CORPUS_PUBLIC_ORIGIN',''))
+    admin_email: str = field(default_factory=lambda: os.getenv('CORPUS_ADMIN_EMAIL',''))
+    smtp_host: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_HOST',''))
+    smtp_port: int = field(default_factory=lambda: int(os.getenv('CORPUS_SMTP_PORT','587')))
+    smtp_username: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_USERNAME',''))
+    smtp_password: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_PASSWORD',''))
+    smtp_from: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_FROM',''))
+    smtp_security: str = field(default_factory=lambda: os.getenv('CORPUS_SMTP_SECURITY','starttls'))
     dev: bool = field(default_factory=lambda: os.getenv('CORPUS_DEV','0')=='1')
     pdf_jobs: bool = True
     venue_checks: bool = field(default_factory=lambda: os.getenv('CORPUS_VENUE_CHECKS','1')!='0')
@@ -25,6 +33,15 @@ class Settings:
     fields: list = field(default_factory=lambda: json.loads(os.getenv('CORPUS_FIELDS','[{"id":"unfiled","label":"Unfiled"}]')))
     def __post_init__(self):
         self.passkey_origin = self.passkey_origin.rstrip('/')
+        self.public_origin = self.public_origin.rstrip('/')
+        if self.public_origin:
+            origin = urlsplit(self.public_origin)
+            if (not origin.hostname or origin.username or origin.password or origin.path or origin.query or origin.fragment
+                    or (origin.scheme != 'https' and not (origin.scheme == 'http' and origin.hostname in ('localhost','127.0.0.1','::1')))):
+                raise ValueError('CORPUS_PUBLIC_ORIGIN must be an HTTPS origin (or local HTTP for development)')
+            origin.port
+        if self.smtp_security not in ('starttls','ssl'):
+            raise ValueError('CORPUS_SMTP_SECURITY must be starttls or ssl')
         if self.passkey_origin:
             origin = urlsplit(self.passkey_origin)
             local = origin.hostname == 'localhost'

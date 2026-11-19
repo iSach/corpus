@@ -30,7 +30,7 @@ def test_capture_one_record_in_several_projects_and_export(app_client):
     exported=client.post('/api/export',json={'format':'json','scope':'all'}).json()
     assert set(json.loads(exported['text'])[0]['projects'])==set(paper['projects'])
     bib=client.post('/api/export',json={'format':'bibtex','scope':'query','q':'project:diff-compose'}).json()
-    assert bib['count']==1 and 'field=diff-compose' in bib['text']
+    assert bib['count']==1 and 'topic=diff-compose' in bib['text']
 
 
 def test_existing_capture_is_additive_and_preserves_notes_ratings_and_pdfs(app_client):

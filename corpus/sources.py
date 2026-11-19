@@ -2,6 +2,10 @@
 
 The module deliberately has no third-party dependencies.  Metadata is fetched from
 Crossref for DOI identifiers and from arXiv's Atom API for arXiv identifiers.
+Other links are read from the page itself: NeurIPS/ICML/ICLR conference pages
+through their paper template, and publisher pages through the Highwire
+``citation_*`` meta tags most of them carry.  OpenReview refuses automated
+clients, so its links are recognized but cannot be fetched.
 ``safe_download`` is shared by background artifact workers and keeps all network
 access behind the same SSRF and response-size checks.
 """
@@ -19,6 +23,7 @@ import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any, Mapping
 
 
@@ -37,10 +42,25 @@ class MetadataFetchError(SourceError):
     """A transport or response-parsing failure after identifier recognition."""
 
 
+class PageError(SourceError):
+    """A fetched page that does not describe a paper (the input's fault, not an outage)."""
+
+
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
 _ARXIV_NEW_RE = re.compile(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", re.IGNORECASE)
 _ARXIV_OLD_RE = re.compile(r"\b[a-z][a-z0-9-]*(?:\.[a-z]{2})?/\d{7}(?:v\d+)?\b", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]*>")
+_OPENREVIEW_ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,40}$")
+# Hosts of the shared NeurIPS/ICML/ICLR conference site: short and full names.
+_CONFERENCES = {
+    "neurips.cc": ("NeurIPS", "Advances in Neural Information Processing Systems"),
+    "icml.cc": ("ICML", "International Conference on Machine Learning"),
+    "iclr.cc": ("ICLR", "International Conference on Learning Representations"),
+}
+OPENREVIEW_BLOCKED = (
+    "OpenReview blocks automated lookups. Paste the paper's NeurIPS, ICML or ICLR page, "
+    "its arXiv id or DOI, or add it by hand."
+)
 
 
 @dataclass(frozen=True)
@@ -143,6 +163,20 @@ def _recognize(identifier: str) -> _Identifier:
         arxiv_id = _arxiv_from_path(parsed.path, parsed.query)
         if arxiv_id:
             return _Identifier("arxiv", arxiv_id)
+    bare = host.removeprefix("www.")
+    if bare in {"openreview.net", "api.openreview.net", "api2.openreview.net"}:
+        values = urllib.parse.parse_qs(parsed.query).get("id", [])
+        if len(values) == 1 and _OPENREVIEW_ID_RE.fullmatch(values[0]):
+            return _Identifier("openreview", values[0])
+        raise SourceError("OpenReview link has no paper id")
+    if bare in _CONFERENCES and re.match(r"/virtual/\d{4}/.", parsed.path):
+        return _Identifier("conference", urllib.parse.urlunsplit(("https", bare, parsed.path.rstrip("/"), "", "")))
+    # Copernicus journals encode their DOI in the article path:
+    # gmd.copernicus.org/articles/12/345/2025/ is 10.5194/gmd-12-345-2025.
+    copernicus = re.fullmatch(r"([a-z]+)\.copernicus\.org", host)
+    article = re.match(r"/articles/(\d+)/(\d+)/(\d{4})(?:/|$)", parsed.path) if copernicus else None
+    if copernicus and article:
+        return _Identifier("doi", "10.5194/{}-{}-{}-{}".format(copernicus.group(1), *article.groups()))
 
     # Recognize DOI-bearing publisher URLs without fetching arbitrary web pages.
     match = re.search(r"(?:^|/)(10\.\d{4,9}/[^?#]+)", urllib.parse.unquote(parsed.path), re.IGNORECASE)
@@ -167,9 +201,8 @@ def _recognize(identifier: str) -> _Identifier:
             if arxiv_id:
                 return _Identifier("arxiv", arxiv_id)
 
-    raise SourceError(
-        "URL does not contain a recognizable DOI or arXiv identifier; generic URLs cannot be used for metadata"
-    )
+    # Anything else is read from the page itself (see page_metadata).
+    return _Identifier("page", urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path or "/", parsed.query, "")))
 
 
 def _validate_max_bytes(max_bytes: int) -> int:
@@ -524,30 +557,227 @@ def _arxiv_metadata(payload: bytes, requested_id: str) -> dict[str, Any]:
     }
 
 
-def fetch_metadata(identifier: str) -> dict[str, Any]:
-    """Fetch normalized metadata for a DOI or arXiv identifier.
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
-    Generic URLs are intentionally rejected unless they encode one of those two
-    identifiers.  Network and parsing failures after recognition are raised as
+
+class _PageReader(HTMLParser):
+    """Collects meta tags, links and the text of the first element of each
+    requested class from one HTML page."""
+
+    def __init__(self, classes: tuple[str, ...] = ()) -> None:
+        super().__init__(convert_charrefs=True)
+        self.meta: dict[str, list[str]] = {}
+        self.links: list[tuple[str, str]] = []
+        self.blocks: dict[str, list[str]] = {}
+        self._classes = set(classes)
+        self._stack: list[tuple[str, str | None]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value or "" for key, value in attrs}
+        if tag == "meta":
+            name = (values.get("name") or values.get("property") or "").strip().lower()
+            if name and "content" in values:
+                self.meta.setdefault(name, []).append(values["content"])
+        if tag == "a" and values.get("href"):
+            self.links.append((values["href"], values.get("title", "")))
+        if tag in _VOID_TAGS:
+            return
+        key = self._stack[-1][1] if self._stack else None
+        found = next((name for name in values.get("class", "").split() if name in self._classes and name not in self.blocks), None)
+        if found:
+            self.blocks[found] = []
+            key = found
+        self._stack.append((tag, key))
+
+    def handle_endtag(self, tag: str) -> None:
+        # Tolerate unclosed elements: close back to the nearest matching tag.
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index][0] == tag:
+                del self._stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if self._stack and self._stack[-1][1]:
+            self.blocks[self._stack[-1][1]].append(data)
+
+    def text(self, name: str) -> str:
+        return _clean_text(" ".join(self.blocks.get(name, [])))
+
+
+def _read_page(payload: bytes, classes: tuple[str, ...] = ()) -> _PageReader:
+    reader = _PageReader(classes)
+    reader.feed(payload.decode("utf-8", errors="replace"))
+    reader.close()
+    return reader
+
+
+def _http_link(value: str, base: str) -> str:
+    link = urllib.parse.urljoin(base, value.strip())
+    parsed = urllib.parse.urlsplit(link)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return ""
+    return link
+
+
+def _citation_metadata(payload: bytes, url: str) -> dict[str, Any]:
+    """Metadata from Highwire ``citation_*`` meta tags (Google Scholar's format)."""
+
+    meta = _read_page(payload).meta
+
+    def first(*names: str) -> str:
+        for name in names:
+            for value in meta.get(name, []):
+                if _clean_text(value):
+                    return _clean_text(value)
+        return ""
+
+    title = first("citation_title", "dc.title")
+    if not title:
+        raise PageError(
+            "That page has no citation metadata. Paste the paper's DOI or arXiv id, or add it by hand."
+        )
+    authors = []
+    for value in meta.get("citation_author") or meta.get("dc.creator") or []:
+        name = _clean_text(value)
+        # Highwire names are usually "Family, Given".
+        if name.count(",") == 1:
+            family, given = (part.strip() for part in name.split(","))
+            name = " ".join(part for part in (given, family) if part)
+        if name and name not in authors:
+            authors.append(name)
+    year = None
+    for value in (first("citation_publication_date"), first("citation_date"), first("citation_online_date"),
+                  first("citation_year"), first("dc.date")):
+        match = re.search(r"\b(1[5-9]\d\d|2[01]\d\d)\b", value)
+        if match:
+            year = int(match.group(1))
+            break
+    abstract = re.sub(r"^abstract[.:]?\s*", "", first("citation_abstract", "dc.description"), flags=re.IGNORECASE)
+    artifacts = []
+    pdf = _http_link(first("citation_pdf_url"), url)
+    if pdf:
+        artifacts.append({"kind": "pdf", "url": pdf})
+    return {
+        "title": title,
+        "authors": authors,
+        "venue": first("citation_journal_title", "citation_conference_title", "citation_inbook_title"),
+        "year": year,
+        "abstract": abstract,
+        "canonical_url": _http_link(first("citation_abstract_html_url"), url) or url,
+        "arxiv_id": _clean_arxiv(first("citation_arxiv_id")),
+        "doi": _clean_doi(first("citation_doi", "dc.identifier")),
+        "artifacts": artifacts,
+    }
+
+
+def _conference_metadata(payload: bytes, url: str) -> dict[str, Any]:
+    """Metadata from a NeurIPS/ICML/ICLR conference-site paper page.
+
+    These pages carry no citation tags; the title, authors, abstract and track
+    are read from the site's paper template.  OpenReview is the paper's home
+    when the page links to it.
+    """
+
+    parsed = urllib.parse.urlsplit(url)
+    short, full = _CONFERENCES[parsed.hostname or ""]
+    reader = _read_page(payload, ("event-title", "event-organizers", "abstract-text-inner", "event-type-badge"))
+    title, badge = reader.text("event-title"), reader.text("event-type-badge")
+    if not title or not re.search(r"\b(?:poster|oral|spotlight|paper)\b", badge, re.IGNORECASE):
+        raise PageError("That conference page is not a paper")
+    authors = [name for name in (part.strip() for part in re.split(r"[\u22c5\u00b7]", reader.text("event-organizers"))) if name]
+    year_match = re.match(r"/virtual/(\d{4})/", parsed.path)
+    year = int(year_match.group(1)) if year_match else None
+    workshop = re.search(r"\bworkshop:\s*(.+)$", badge, re.IGNORECASE)
+    if workshop:
+        name = workshop.group(1).strip()
+        # Many workshop names already say which conference they belong to.
+        venue = name if re.search(rf"\b{short}\b.*\bworkshop\b", name, re.IGNORECASE) else f"{short} {year} Workshop: {name}"
+        venue_class = "other"
+    else:
+        venue, venue_class = full, "conference"
+    openreview_id = None
+    for href, _ in reader.links:
+        link = urllib.parse.urlsplit(href)
+        values = urllib.parse.parse_qs(link.query).get("id", [])
+        if (link.hostname or "").removeprefix("www.") == "openreview.net" and len(values) == 1 and _OPENREVIEW_ID_RE.fullmatch(values[0]):
+            openreview_id = values[0]
+            break
+    return {
+        "title": title,
+        "authors": authors,
+        "venue": venue,
+        "venue_class": venue_class,
+        "year": year,
+        "abstract": reader.text("abstract-text-inner"),
+        "canonical_url": f"https://openreview.net/forum?id={openreview_id}" if openreview_id else url,
+        "arxiv_id": None,
+        "doi": None,
+        "openreview_id": openreview_id,
+        # OpenReview serves its PDFs only to browsers, so none is attached;
+        # the conference page is kept as a link.
+        "artifacts": [{"kind": "other", "url": url}] if openreview_id else [],
+    }
+
+
+def page_metadata(kind: str, payload: bytes, url: str) -> dict[str, Any]:
+    """Parse a fetched ``conference`` or ``page`` identifier's HTML."""
+
+    return _conference_metadata(payload, url) if kind == "conference" else _citation_metadata(payload, url)
+
+
+def merge_page(published: dict[str, Any], page: Mapping[str, Any]) -> dict[str, Any]:
+    """Prefer the DOI record, keeping what only the landing page had."""
+
+    merged = dict(published)
+    if not merged.get("abstract") and page.get("abstract"):
+        merged["abstract"] = page["abstract"]
+    if not any(item.get("kind") == "pdf" for item in merged.get("artifacts", [])):
+        merged["artifacts"] = [*merged.get("artifacts", []), *(item for item in page.get("artifacts", []) if item.get("kind") == "pdf")]
+    return merged
+
+
+def _crossref_lookup(doi: str) -> dict[str, Any]:
+    endpoint = "https://api.crossref.org/works/" + urllib.parse.quote(doi, safe="")
+    payload = _fetch_url(
+        endpoint,
+        max_bytes=_METADATA_MAX_BYTES,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        decoded = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceError("Crossref returned invalid JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise SourceError("Crossref returned an invalid response")
+    return _crossref_metadata(decoded, doi)
+
+
+def fetch_metadata(identifier: str) -> dict[str, Any]:
+    """Fetch normalized metadata for a DOI, arXiv id, or paper page.
+
+    Network and parsing failures after recognition are raised as
     ``MetadataFetchError`` so callers can distinguish them from invalid input.
     """
 
     source = _recognize(identifier)
+    if source.kind == "openreview":
+        raise SourceError(OPENREVIEW_BLOCKED)
     try:
         if source.kind == "doi":
-            endpoint = "https://api.crossref.org/works/" + urllib.parse.quote(source.value, safe="")
+            return _crossref_lookup(source.value)
+        if source.kind in {"conference", "page"}:
             payload = _fetch_url(
-                endpoint,
+                source.value,
                 max_bytes=_METADATA_MAX_BYTES,
-                headers={"Accept": "application/json"},
+                headers={"Accept": "text/html,application/xhtml+xml;q=0.9"},
             )
-            try:
-                decoded = json.loads(payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise SourceError("Crossref returned invalid JSON") from exc
-            if not isinstance(decoded, Mapping):
-                raise SourceError("Crossref returned an invalid response")
-            return _crossref_metadata(decoded, source.value)
+            paper = page_metadata(source.kind, payload, source.value)
+            if paper.get("doi"):
+                try:
+                    return merge_page(_crossref_lookup(paper["doi"]), paper)
+                except SourceError:
+                    pass
+            return paper
 
         endpoint = "https://export.arxiv.org/api/query?id_list=" + urllib.parse.quote(source.value, safe="")
         payload = _fetch_url(
@@ -556,7 +786,7 @@ def fetch_metadata(identifier: str) -> dict[str, Any]:
             headers={"Accept": "application/atom+xml, application/xml;q=0.9"},
         )
         return _arxiv_metadata(payload, source.value)
-    except MetadataFetchError:
+    except (MetadataFetchError, PageError):
         raise
     except Exception as exc:
         raise MetadataFetchError(str(exc) or "metadata source failed") from exc
@@ -565,6 +795,7 @@ def fetch_metadata(identifier: str) -> dict[str, Any]:
 __all__ = [
     "DEFAULT_MAX_BYTES",
     "MetadataFetchError",
+    "PageError",
     "SourceError",
     "fetch_metadata",
     "safe_download",

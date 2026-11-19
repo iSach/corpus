@@ -12,7 +12,7 @@
   <a href="#production-deployment"><img src="https://img.shields.io/badge/deployment-self--hosted-252525" alt="Self-hosted"></a>
 </p>
 
-Corpus is a single-user, self-hosted research library for collecting, organizing, searching, and reviewing academic papers. Capture metadata from DOI or arXiv, add notes, tags, scores, and artifact links, cache PDFs for page-aware full-text search, and export a library you control.
+Corpus is an invite-only, self-hosted research library for collecting, organizing, searching, and reviewing academic papers. Capture metadata from a DOI, arXiv, a conference page or a publisher's page, add notes, tags, scores, and artifact links, cache PDFs for page-aware full-text search, and export a library you control.
 
 Organize papers around your own projects with configurable fields. Corpus works for literature reviews, research planning, and ongoing technical reading; it makes no assumptions about your discipline or workflow.
 
@@ -30,6 +30,7 @@ Organize papers around your own projects with configurable fields. Corpus works 
 - JSON, CSV, and BibTeX export, a bounded read-only SQL console, and a Bearer-authenticated ingest API for scripts and agents.
 - One FastAPI process and SQLite database. No frontend build step or external service dependency.
 - Optional daily arXiv watch in GitHub Actions; define private topic queries and send matches to the Inbox through the protected ingest API.
+- Administrator-managed invitations and private accounts, each with a separate library and PDF cache.
 - Native passkey sign-in, including iCloud Keychain, with automatic sign-in attempts after registration and a password fallback.
 
 Corpus is released under the [MIT License](LICENSE). The bundled fonts retain their respective SIL Open Font License notices in `static/fonts/`.
@@ -63,17 +64,19 @@ Names explicitly listed in `CORPUS_FIELDS` are reapplied on startup. Topics adde
 
 ## Add papers quickly
 
-Open **Add** to search by title or author, or paste a DOI, arXiv ID, or paper link into the search bar. Choose one or several projects in the left rail, then click **ADD** beside a result. Project choices stay selected across papers and reloads. Saved papers appear immediately; arXiv and Crossref results arrive independently, so one slow source does not block other matches. Recent catalog lookups are cached for ten minutes. You can limit a search to titles or authors and request more results.
+Open **Add** to search by title or author, or paste a DOI, arXiv ID, or paper link into the search bar. Links to NeurIPS, ICML and ICLR paper pages are read from the page (workshop papers included, keyed by their OpenReview id); other publisher links are read from the page's `citation_*` tags, and Crossref is used when the page names a DOI. OpenReview links themselves only match papers already saved, because OpenReview blocks automated lookups. Choose one or several projects in the left rail, then click **ADD** beside a result. Project choices stay selected across papers and reloads. Saved papers appear immediately; arXiv and Crossref results arrive independently, so one slow source does not block other matches. Recent catalog lookups are cached for ten minutes. You can limit a search to titles or authors and request more results.
 
 Select several result checkboxes and use **ADD SELECTED**, or press **Ctrl/⌘ + Enter** to add the selection (or the focused result). New manual captures enter the library unread. Existing papers gain the selected project memberships while retaining their notes, scores, reading status, and cached files. **ADDED** means the paper already belongs to every currently selected project. Possible title duplicates offer **USE EXISTING** or **KEEP SEPARATE**; pending and dismissed suggestions require an explicit **APPROVE & ADD** or **RESTORE & ADD** action.
 
 For many tabs, use **Paste links**: paste up to 30 URLs or identifiers, one per line, look up their metadata, review the matches, and add them together. arXiv identifiers are resolved in one grouped request. Unsupported links keep a visible error while valid matches remain addable. DOI-bearing publisher URLs are recognized without fetching arbitrary web pages.
 
+For PDFs you already have, use **Import PDF**, or drop PDF files anywhere in Corpus while signed in. Each PDF is read locally for the arXiv stamp in its margin, a DOI in its metadata or on its first page, and the title set in its largest type. The paper is then looked up in your library, then on arXiv and Crossref. A DOI printed on the page counts only if the record's title matches, because the first page can cite other work. When nothing matches, a new entry is made from the PDF's own title, authors, abstract and year. Review the matches and add them as usual. The file is kept as the paper's cached PDF and indexed for full-text search, unless the paper already has a cached PDF. Uploads may be up to 50 MB; an upload that is not added within a day is discarded.
+
 For individual tabs, drag **SAVE TO CORPUS** from the project rail onto your browser's bookmarks bar. Click that bookmark while viewing a paper to open its Add view with the link prefilled. If the link has no recognizable identifier, its page title is used to search instead. This shortcut opens a preview and requires an explicit Add action. If a site blocks the bookmark button, paste its URL or title in Add.
 
 **Manual entry** retains the detailed metadata, notes, scores, and artifact editor. Existing paper edits also support multiple project checkboxes. On phones, **PROJECTS** opens the project selector and tapping a result reveals its abstract.
 
-Projects use the existing topic IDs. `papers.field` remains the primary topic for compatibility and topic-specific assessments; `paper_projects` records all memberships. Both `field:` and `project:` search all memberships, and project filters, statistics, JSON/CSV/BibTeX exports include secondary projects without duplicating a paper in the library total.
+Projects use the existing topic IDs. `papers.field` remains the primary topic for compatibility and topic-specific assessments; `paper_projects` records all memberships. `topic:` (and the older `field:` and `project:`) searches all memberships, and project filters, statistics, JSON/CSV/BibTeX exports include secondary projects without duplicating a paper in the library total.
 
 The repository includes an example **Uncertainty calibration** topic that shows the shape of a research brief and its relevance criteria. It is in [topics/uncertainty-calibration.json](topics/uncertainty-calibration.json); copy it as a starting point for your own topics. Add or update a topic file in the configured library with:
 
@@ -114,6 +117,13 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_INGEST_TOKEN` | generated file token | Bearer token for `POST /api/ingest`. If omitted, the token is generated in `data/ingest-token` with mode `0600`. |
 | `CORPUS_SQL_LOCAL_ONLY` | `0` | Set to `1` to allow the SQL console only when the resolved client address is loopback. |
 | `CORPUS_SECURE_COOKIE` | `0` | Set to `1` when the app is served through HTTPS. |
+| `CORPUS_PUBLIC_ORIGIN` | empty | Exact public HTTPS origin for invitation links; falls back to `CORPUS_PASSKEY_ORIGIN`. Local HTTP is allowed for development. |
+| `CORPUS_ADMIN_EMAIL` | empty | Optional initial administrator email, used only when the account registry is first created. You can set or change it later in **Account**. |
+| `CORPUS_SMTP_HOST` | empty | SMTP server for automatic invitation email. Leave unset to copy links or use your email app. |
+| `CORPUS_SMTP_PORT` | `587` | SMTP submission port. |
+| `CORPUS_SMTP_SECURITY` | `starttls` | `starttls` for port 587 or `ssl` for implicit TLS, usually port 465. Certificate verification is required. |
+| `CORPUS_SMTP_USERNAME` / `CORPUS_SMTP_PASSWORD` | empty | SMTP authentication credentials. |
+| `CORPUS_SMTP_FROM` | empty | Sender address, such as `corpus@yourdomain.org`; authorize it with your mail provider. |
 | `CORPUS_PASSKEY_ORIGIN` | empty (disabled) | Exact public HTTPS origin, such as `https://literature.example.org`. The hostname becomes the passkey relying-party ID. Only `http://localhost:PORT` is allowed for local passkey development. |
 | `CORPUS_VENUE_CHECKS` | `1` | Set to `0` to stop background checks for the published versions of arXiv preprints. **CHECK NOW** in the detail pane still works. |
 | `CORPUS_VENUE_CHECK_INTERVAL` | `5` | Seconds between two papers' published-version lookups. |
@@ -122,6 +132,22 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_DEV` | `0` | Disable login for loopback development only. Prefer `run.py --dev`. |
 
 Each PDF download is bounded to 50 MiB, each extracted PDF to 1,000 pages and 20 million characters, and request bodies to 2 MiB. The cache quota is checked before a download begins.
+
+## Accounts and invitations
+
+On upgrade, your existing library and registered passkeys become the administrator account. The database and PDF cache stay in their existing locations. You can keep signing in with your current password and a blank email field, or set an email in **Account**. `CORPUS_PASSWORD` still controls the administrator password when configured; member passwords are independent of it. There is no public signup or client-controlled role assignment.
+
+Set `CORPUS_PUBLIC_ORIGIN` to your Corpus HTTPS address, then open **People** as the administrator. Enter a friend's email and choose **Create invitation link**. Copy the link or use **Open in email app** to prepare an invitation in your own mail client. This works without an email service. If SMTP is configured, **Send email** sends the invitation directly instead. Merely owning a domain does not provide SMTP service; use your domain's mail provider, a verified transactional sender, or an SMTP server you operate.
+
+For initial Resend setup from a phone, **People → Connect invitation email** provides a masked API-key field. It validates a Full access key against Resend's domain API and saves it with mode `0600` in `$CORPUS_DATA_DIR/mail-setup/resend-key`, outside the library SQL console. It never returns the key. This is a secure handoff to the server operator, who completes DNS verification and SMTP configuration, installs a sending-only key, and removes the setup key. Saving a key alone does not enable sending.
+
+The recipient follows the link, sets and confirms a password of at least 12 characters, and enters an empty private library. Invitation links expire after 72 hours, work once, and can be revoked. Creating a new invitation for an address replaces its previous pending link only after successful creation or email submission. Opening a link does not accept it, so email link scanners cannot create an account. Tokens are carried in a URL fragment, removed from the address bar when the page loads, and stored only as hashes on the server. A copied link is shown only when created; create another if you lose it.
+
+Members sign in with their email and password and can add their own passkeys. The sign-in page remembers the email on that browser; entering another email selects that account's passkeys. **Account** supports changing your email and password after confirming your current password. For a forgotten member password, the administrator can create a **Password reset link** in **People**, then copy it to the member. This keeps the library and revokes old sessions and passkeys when used. Disable a member to revoke access and current sessions; re-enabling them requires signing in again. Administrator recovery remains the server's `CORPUS_PASSWORD` setting.
+
+Account metadata and invitation hashes live in `$CORPUS_DATA_DIR/accounts.sqlite3`. Member libraries and PDF caches live in `$CORPUS_DATA_DIR/users/<account-id>/`. Each browser request selects its library from its server-side session. Paper IDs, SQL, exports, searches, projects, and PDF download routes operate only inside that library. The administrator manages access but has no browser route to inspect another member's library. The server operator can access files on disk. PDF and venue workers use explicit per-account settings. The existing ingest token and scheduled agent API remain scoped to the administrator library; do not share that token with members.
+
+Run one application process as before. Sessions and rate limits are held in memory, and restarting signs everyone out. The configured PDF quota applies separately to each account. This version is intended for a small invited group; it does not add shared libraries, public registration, billing, or email delivery tracking.
 
 ## Passkey sign-in
 
@@ -163,6 +189,8 @@ Many papers enter the library as arXiv preprints and are published at a conferen
 - **Proposed** otherwise, and always for workshops. The detail pane's **PUBLISHED VERSION** section shows what was found and which sources said so, with **APPLY** and **NOT THIS** buttons. A dismissed answer is never proposed again. Find waiting proposals with `is:venue-proposed`.
 - **Never overridden**: if you edit a paper's venue, venue class or year, it is no longer checked.
 
+**Export** lists every paper in the topics you tick, all included by default. Untick a paper to leave it out of exports while keeping it in the library; the topics, exclusions and options are saved with your library, so they follow you to other devices. The *Minimal* preset writes only author, title, venue and year, which suits most conference templates; *Standard* adds a link, DOI and arXiv eprint; *Full* also keeps topics, tags, your scores, notes and code links. Style options choose the link (none, arXiv, published version, or best available), short `authorYEARword` citation keys, short venue names (NeurIPS, ICML…), a maximum number of authors, braces that keep acronyms capitalized in titles, LaTeX accents for classic BibTeX, and `@article` or `@misc` for preprints.
+
 BibTeX exports cite the published venue as `@inproceedings` or `@article` and keep `eprint`/`archiveprefix` for the arXiv version. Preprints export as `journal = {arXiv preprint arXiv:…}`. To check every due paper once from a shell, using the server's environment:
 
 ```sh
@@ -173,16 +201,20 @@ BibTeX exports cite the published venue as `@inproceedings` or `@article` and ke
 
 The browser uses these routes:
 
+- `GET /api/admin/accounts` lists account status and pending invitations for the administrator. `POST /api/admin/invitations` accepts `{ "email": "friend@example.org", "delivery": "link" | "email" }`; copied links are returned once, while emailed links are not returned. `POST /api/admin/invitations/{id}/revoke` revokes a pending link. `POST /api/admin/accounts/{id}/status` accepts `active` or `disabled` for an existing member.
+- `POST /api/invitations/inspect` and `/accept` are public, rate-limited endpoints taking an invitation `token`; acceptance also takes `password`. `POST /api/account` changes the current account email or password after `current_password` confirmation. `/api/session` returns the authenticated account's role and email. Passkey authentication endpoints accept an `email` query parameter to select an account; omitting it selects the administrator.
+
 - `GET /api/config`, `GET /api/session`, `POST /api/login`, and `POST /api/logout` handle configuration and the seven-day in-memory session cookie.
 - `GET /api/passkeys` lists registered keys; `POST /api/passkeys/register/options` and `/register/verify` register a key after password confirmation; `POST /api/passkeys/{id}/remove` removes one after password confirmation. `POST /api/passkeys/authenticate/options` and `/authenticate/verify` are the public passkey sign-in endpoints and issue the same session cookie as password login.
 - `GET /api/papers` searches the library; `GET /api/paper?id=...` returns detail, provenance, and PDF hits; `POST /api/papers` creates or updates a paper; `DELETE /api/paper?id=...` removes a paper with its artifacts, tags, project links, extracted text, and history; `POST /api/duplicates` returns near-duplicate candidates.
 - `GET /api/inbox` lists discoveries by `status` (`pending`, `later`, `approved`, or `dismissed`), `field`, `q`, `evidence`, `origin`, and `sort` (`relevance`, `newest`, or `oldest`). `POST /api/inbox/decision` takes `{ "id": ..., "action": "approve" | "dismiss" | "restore" | "return" | "defer" | "resume", "expected_modified": ..., "assessment_id": ... }`; `POST /api/inbox/undo` takes `{ "decision_id": ... }`. All require an interactive session, and the ingest token cannot make approval decisions.
 - `POST /api/review/check` prepares a PDF before admission; `GET /api/review/text` reads one extracted page; `POST /api/review/assessments` appends a structured abstract or full-text assessment; `GET /api/review/work` returns candidates awaiting assessment or prepared checks, including checks that finish after early approval. The last three routes also accept the ingest token. Assessments are independent of library admission and personal scores.
 - `POST /api/papers/venue-check` takes `{ "id": ... }`, looks for a published version now, and returns `status` (`applied`, `proposed`, `none`, `rejected-before`, or `error`) and the updated paper. `POST /api/venue-proposals/{id}` takes `{ "action": "apply" | "reject" }`.
-- `POST /api/metadata` fetches DOI or arXiv metadata; it accepts an identifier or source URL containing one of those identifiers.
+- `POST /api/catalog/pdf?name=<file name>` takes a PDF as the raw request body (`Content-Type: application/pdf`, up to 50 MB). It returns the matched or extracted paper with an `upload` token. Pass the paper, token included, to `POST /api/capture` to add it and keep the file.
+- `POST /api/metadata` fetches metadata for a DOI, an arXiv id, or a paper page URL (conference pages and pages with `citation_*` meta tags). Page fetches go through the same SSRF, size and redirect guards as PDF downloads.
 - `GET /api/catalog/search?q=...&source=library|crossref|arxiv&mode=all|title|author&offset=0` searches saved papers or a public catalog. `POST /api/catalog/resolve` accepts `{ "identifiers": [...] }` and returns per-link metadata or errors. `POST /api/capture` takes `{ "projects": [...], "papers": [...], "query": ... }` and adds or files up to 50 selected papers per request. These routes require a browser session; the ingest token cannot use manual capture.
 - `GET /api/topics` lists topics, research descriptions, and relevance criteria; `POST /api/topics` creates or updates `{ "id": ..., "label": ..., "description": ..., "relevance_criteria": ..., "symbol": ... }`, where `symbol` is one of `triangle`, `circle`, `square`, `diamond`, `star`, `cross`, `hexagon`, `pentagon`, or empty. Both routes require a session. Descriptions and criteria are omitted from the public configuration response.
-- `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
+- `GET /api/stats`, `POST /api/export`, and the smart-list routes support review and export workflows. `POST /api/export` takes `scope` (`query`, `all` or `selection` with `ids`), `format`, `sort` (`query`, `author`, `year`, `added`, `key`, `title`), `include` (`doi`, `eprint`, `keywords`, `scores`, `notes`, `code`, `local_paths`) and, for BibTeX, `bibtex`: `url` (`canonical`, `none`, `arxiv`, `published`, `best`), `keys` (`stored`, `short`), `venue` (`full`, `short`), `authors` (0 for all, or a maximum before “and others”), `protect` (`none`, `smart`, `all`), `accents` (`unicode`, `latex`) and `preprints` (`article`, `misc`). Omitted options keep the original output. `GET /api/export/papers`, `PUT /api/export/settings` and `POST /api/export/exclusions` back the Export page. `POST /api/artifacts/{id}/cache` queues a linked or failed PDF from the detail pane; `POST /api/artifacts/{id}/retry` is an alias that supports the same linked/failed states.
 - `POST /api/sql` runs a bounded read-only query. SQLite is opened in read-only mode with `query_only`, an authorizer, a 150 ms progress timeout, and a 1,000-row cap. `CORPUS_SQL_LOCAL_ONLY=1` adds a loopback client check.
 - `POST /api/ingest` is the agent-facing endpoint and is authenticated with the Bearer token described in [INGEST.md](INGEST.md).
   The included [scheduled paper watch](docs/paper-watch.md) discovers arXiv matches for your GitHub-configured topics and sends them there.
@@ -194,7 +226,7 @@ The production systemd and nginx templates are [docs/corpus.service](docs/corpus
 The query bar accepts bare terms and these filters:
 
 ```text
-field:thesis        tag:to-read           venue:ICML  author:Raymond
+topic:thesis        tag:to-read           venue:ICML  author:Raymond
 year:2025           rel:>7                state:unreviewed
 has:code            has:pdf              has:cached
 is:starred          is:venue-proposed     pdf:"posterior collapse"
@@ -231,6 +263,12 @@ Copy `docs/nginx.conf` into the nginx site configuration, replace `literature.ex
 ## Backup and restore
 
 ### Nightly database backups
+
+**For accounts, deploy the updated standalone backup script, backup service, and Mac pull script together.** The service now uses `--all-accounts`, which writes `corpus-YYYYMMDDTHHMMSSZ.tar.gz` containing verified SQLite snapshots of `accounts.sqlite3`, the administrator's `corpus.sqlite3`, and every active or disabled member's `users/<id>/corpus.sqlite3`. It snapshots the registry first, then each library; each database is consistent independently. PDFs are excluded. `--verify` checks either a database snapshot or an account archive. The restricted SSH pull accepts both formats. Existing single-library snapshots remain readable.
+
+Without `--all-accounts`, the backup command still copies only the database passed with `--database`; it does **not** protect members or invitation records. If you previously installed the backup script under `/usr/local/lib/corpus-backup/`, replace that standalone copy when upgrading.
+
+To restore an account archive, stop Corpus, take a fresh backup, verify the selected archive, and unpack it to a new private staging directory. Restore `accounts.sqlite3`, `corpus.sqlite3`, and the `users/` database tree together under `CORPUS_DATA_DIR`, preserving ownership and removing old WAL/SHM files only after the fresh backup. Use the saved registry and member tree as a matching set, including when some current members did not exist in the archive. Keep existing PDF folders if desired; PDFs absent from the backup remain downloadable. Keep the old data tree until the restore is verified. The single-database procedure below is for older snapshots or deliberate restoration of one library, not for restoring the account system.
 
 `corpus/backup.py` (also `scripts/backup_db.py`) copies the database with SQLite's online backup API, so the copy is consistent while Corpus keeps running. Each run writes `corpus-YYYYMMDDTHHMMSSZ.sqlite3` (UTC) through a temporary file, runs `PRAGMA integrity_check` on the copy, renames it into place, then deletes all but the newest `--keep` snapshots (default 14). If the check fails, the run exits non-zero, removes the partial copy and prunes nothing. Other files in the backup directory are never touched.
 

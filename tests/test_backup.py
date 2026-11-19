@@ -263,6 +263,75 @@ def test_mac_pull_verifies_downloads_and_keeps_its_own_retention(tmp_path):
     assert "fetched 1, pruned 1, keeping 2" in run.stdout
     assert sorted(p.name for p in mac.iterdir()) == [stamp(3), stamp(4)]
 
+    # The upgraded pull also downloads and retains complete account archives.
+    registry = sqlite3.connect(tmp_path/'accounts.sqlite3')
+    registry.execute('CREATE TABLE users(id TEXT,status TEXT)'); registry.commit(); registry.close()
+    bundle = backup.run_account_backup(src,server,now=T0+timedelta(days=5))
+    bundle_name = Path(bundle['backup']).name
+    run = pull()
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert sorted(p.name for p in mac.iterdir()) == [stamp(4),bundle_name]
+    assert (mac/bundle_name).read_bytes() == Path(bundle['backup']).read_bytes()
+
     run = pull(CORPUS_PULL_DEST=str(tmp_path / "unplugged" / "Corpus Backups"))
     assert run.returncode == 1 and "is not available (drive disconnected?)" in run.stdout
     assert not (tmp_path / "unplugged").exists()
+
+
+def test_account_bundle_contains_registry_and_each_library_and_can_be_pulled(tmp_path):
+    import io
+    import tarfile
+    root = tmp_path / 'data'
+    root.mkdir()
+    make_db(root/'corpus.sqlite3').close()
+    registry = sqlite3.connect(root/'accounts.sqlite3')
+    registry.execute('CREATE TABLE users(id TEXT, status TEXT)')
+    member_id = 'a'*32
+    registry.executemany('INSERT INTO users VALUES(?,?)',[('owner','active'),(member_id,'active'),('b'*32,'invited')])
+    registry.commit(); registry.close()
+    member = root/'users'/member_id/'corpus.sqlite3'
+    member.parent.mkdir(parents=True)
+    make_db(member,rows=3).close()
+    dest = tmp_path/'snapshots'
+    result = backup.run_account_backup(root/'corpus.sqlite3',dest,now=T0)
+    final = Path(result['backup'])
+    assert final.name.endswith('.tar.gz')
+    assert backup.verify_backup(final) == []
+    with tarfile.open(final) as archive:
+        assert set(archive.getnames()) == {'corpus.sqlite3','accounts.sqlite3',f'users/{member_id}/corpus.sqlite3'}
+        archive.extractall(tmp_path/'restored',filter='data')
+    assert len(read_only(tmp_path/'restored'/'users'/member_id/'corpus.sqlite3').execute('SELECT * FROM notes').fetchall()) == 3
+    output = io.BytesIO()
+    assert backup.serve(dest,'list',out=output) == 0
+    assert final.name.encode() in output.getvalue()
+    output = io.BytesIO()
+    assert backup.serve(dest,'get '+final.name,out=output) == 0
+    assert output.getvalue() == final.read_bytes()
+    assert backup.main(['--verify',str(final)]) == 0
+
+
+def test_account_bundle_fails_without_pruning_if_one_library_is_missing(tmp_path):
+    root = tmp_path/'data'; root.mkdir()
+    make_db(root/'corpus.sqlite3').close()
+    db = sqlite3.connect(root/'accounts.sqlite3')
+    db.execute('CREATE TABLE users(id TEXT,status TEXT)'); db.commit(); db.close()
+    dest = tmp_path/'backups'
+    good = backup.run_account_backup(root/'corpus.sqlite3',dest,now=T0)
+    db = sqlite3.connect(root/'accounts.sqlite3')
+    db.execute('INSERT INTO users VALUES(?,?)',('c'*32,'active')); db.commit(); db.close()
+    with pytest.raises(backup.BackupError):
+        backup.run_account_backup(root/'corpus.sqlite3',dest,keep=1,now=T0+timedelta(days=1))
+    assert [p.name for p in dest.iterdir()] == [Path(good['backup']).name]
+
+
+def test_account_bundle_verifier_rejects_paths_and_missing_registry(tmp_path):
+    import io
+    import tarfile
+    path = tmp_path/'bad.tar.gz'
+    with tarfile.open(path,'w:gz') as archive:
+        item = tarfile.TarInfo('../escape'); item.size = 4
+        archive.addfile(item,io.BytesIO(b'nope'))
+    assert backup.verify_backup(path) == ['unexpected entry in account backup']
+    with tarfile.open(path,'w:gz'):
+        pass
+    assert backup.verify_backup(path) == ['account backup is missing the registry or owner library']

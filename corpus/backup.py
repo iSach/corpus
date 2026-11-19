@@ -25,11 +25,12 @@ import signal
 import sqlite3
 import sys
 import tempfile
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_KEEP = 14
-BACKUP_NAME = re.compile(r"^corpus-\d{8}T\d{6}Z\.sqlite3$")
+BACKUP_NAME = re.compile(r"^corpus-\d{8}T\d{6}Z\.(?:sqlite3|tar\.gz)$")
 
 
 class BackupError(RuntimeError):
@@ -136,6 +137,89 @@ def run_backup(database: Path, dest: Path, keep: int = DEFAULT_KEEP, now: dateti
     return {"backup": str(final), "bytes": final.stat().st_size, "kept": kept, "pruned": pruned}
 
 
+def run_account_backup(database: Path, dest: Path, keep: int = DEFAULT_KEEP, now: datetime | None = None,
+                       group_readable: bool = False) -> dict:
+    """Bundle verified SQLite snapshots of the registry and every private library.
+
+    Snapshot the registry first: an account is marked active only after its
+    library exists. Account creation can continue while this backup runs. Each
+    database is consistent individually; the bundle is not a cross-library
+    transaction. PDFs can be downloaded again and are excluded.
+    """
+    database, dest = Path(database), Path(dest)
+    if keep < 1:
+        raise BackupError('--keep must be at least 1')
+    registry = database.parent / 'accounts.sqlite3'
+    if not registry.is_file():
+        return run_backup(database, dest, keep, now, group_readable)
+    dest.mkdir(mode=0o750 if group_readable else 0o700, parents=True, exist_ok=True)
+    final = dest / backup_name(now or datetime.now(timezone.utc)).replace('.sqlite3','.tar.gz')
+    fd, name = tempfile.mkstemp(prefix='.corpus-', suffix='.partial', dir=dest)
+    os.close(fd)
+    partial = Path(name)
+    try:
+        with tempfile.TemporaryDirectory(prefix='.corpus-snapshots-',dir=dest) as temp:
+            folder = Path(temp)
+            def copy(source, relative):
+                if not source.is_file() or source.stat().st_uid != os.geteuid():
+                    raise BackupError(f'run this as the database owner; database missing or not owned by current user: {source}')
+                target = folder / relative
+                target.parent.mkdir(parents=True,exist_ok=True)
+                snapshot(source,target)
+                problems = integrity_errors(target)
+                if problems:
+                    raise BackupError('integrity_check failed on the copy: ' + '; '.join(problems[:5]))
+            copy(registry,Path('accounts.sqlite3'))
+            copy(database,Path('corpus.sqlite3'))
+            with _read_only(folder/'accounts.sqlite3') as db:
+                user_ids = [row[0] for row in db.execute("SELECT id FROM users WHERE id!='owner' AND status IN ('active','disabled')")]
+            for user_id in user_ids:
+                if not re.fullmatch(r'[0-9a-f]{32}',user_id):
+                    raise BackupError('invalid account ID in registry')
+                relative = Path('users')/user_id/'corpus.sqlite3'
+                copy(database.parent/relative,relative)
+            with tarfile.open(partial,'w:gz') as archive:
+                for path in sorted(folder.rglob('*.sqlite3')):
+                    archive.add(path,arcname=str(path.relative_to(folder)),recursive=False)
+        if group_readable:
+            os.chmod(partial,0o640)
+        _fsync(partial)
+        os.replace(partial,final)
+        _fsync(dest)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    pruned = prune(dest,keep,protect=final)
+    return {'backup':str(final),'bytes':final.stat().st_size,
+            'kept':sum(1 for p in dest.iterdir() if BACKUP_NAME.match(p.name)), 'pruned':pruned}
+
+
+def verify_backup(path: Path) -> list[str]:
+    if not str(path).endswith('.tar.gz'):
+        return integrity_errors(path)
+    try:
+        with tempfile.TemporaryDirectory(prefix='corpus-verify-') as temp, tarfile.open(path,'r:gz') as archive:
+            names = []
+            for item in archive:
+                if not item.isfile() or not re.fullmatch(r'(?:accounts|corpus)\.sqlite3|users/[0-9a-f]{32}/corpus\.sqlite3',item.name):
+                    return ['unexpected entry in account backup']
+                if item.name in names:
+                    return ['duplicate entry in account backup']
+                names.append(item.name)
+                target = Path(temp)/'snapshot.sqlite3'
+                with archive.extractfile(item) as source, target.open('wb') as output:
+                    shutil.copyfileobj(source,output)
+                errors = integrity_errors(target)
+                if errors:
+                    return [item.name + ': ' + error for error in errors]
+                target.unlink()
+            if not {'accounts.sqlite3','corpus.sqlite3'}.issubset(names):
+                return ['account backup is missing the registry or owner library']
+    except (tarfile.TarError,OSError) as exc:
+        return [str(exc)]
+    return []
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as f:
@@ -164,7 +248,7 @@ def serve(dest: Path, request: str, out=None) -> int:
             return 0
         print(f"no such backup: {words[1]}", file=sys.stderr)
         return 1
-    print("allowed requests: list | get corpus-YYYYMMDDTHHMMSSZ.sqlite3", file=sys.stderr)
+    print("allowed requests: list | get corpus-YYYYMMDDTHHMMSSZ.sqlite3 (or .tar.gz)", file=sys.stderr)
     return 2
 
 
@@ -180,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dest", type=Path, help="directory that receives the snapshots")
     parser.add_argument("--keep", type=int, default=DEFAULT_KEEP,
                         help=f"timestamped snapshots to keep (default: {DEFAULT_KEEP})")
+    parser.add_argument("--all-accounts", action="store_true",
+                        help="bundle the registry and all account databases in a verified .tar.gz snapshot")
     parser.add_argument("--group-readable", action="store_true",
                         help="write snapshots as 0640 instead of 0600, for a pull account in the folder's group")
     parser.add_argument("--verify", type=Path, metavar="FILE",
@@ -191,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.serve:
         return serve(args.serve, os.environ.get("SSH_ORIGINAL_COMMAND", ""))
     if args.verify:
-        problems = integrity_errors(args.verify) if args.verify.is_file() else ["file not found"]
+        problems = verify_backup(args.verify) if args.verify.is_file() else ["file not found"]
         print(f"{args.verify}: " + ("ok" if not problems else "; ".join(problems[:5])))
         return 1 if problems else 0
     if not args.dest:
@@ -199,7 +285,8 @@ def main(argv: list[str] | None = None) -> int:
 
     previous = signal.signal(signal.SIGTERM, _terminate)
     try:
-        result = run_backup(args.database, args.dest, args.keep, group_readable=args.group_readable)
+        backup = run_account_backup if args.all_accounts else run_backup
+        result = backup(args.database, args.dest, args.keep, group_readable=args.group_readable)
     except (BackupError, sqlite3.Error, OSError) as exc:
         print(f"corpus backup failed: {exc}", file=sys.stderr)
         return 1

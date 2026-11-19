@@ -23,7 +23,7 @@ def listing(db, query='', field='', status='pending', sort='relevance', limit=50
         raise ValueError('Invalid evidence or discovery filter')
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError('Invalid pagination')
-    compiled = compile_query(query, {'field':[field]} if field else {})
+    compiled = compile_query(query, {})
     where = 'p.admission=? AND ('+compiled.where+')'
     params = ['pending' if status=='later' else status, *compiled.params]
     if status=='later':
@@ -45,13 +45,19 @@ def listing(db, query='', field='', status='pending', sort='relevance', limit=50
         where += ' AND EXISTS (SELECT 1 FROM inbox_decisions d WHERE d.paper_id=p.id)'
     order = {'relevance':"CASE a.priority WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 WHEN 'exclude' THEN 0 END DESC NULLS LAST,p.proposed_rel DESC NULLS LAST,p.added DESC", 'newest':'p.added DESC', 'oldest':'p.added ASC'}[sort]
     joins = ' FROM papers p JOIN ingest_run r ON r.id=p.ingest_run_id LEFT JOIN review_assessments a ON a.id=(SELECT id FROM review_assessments x WHERE x.paper_id=p.id AND x.field=p.field ORDER BY x.id DESC LIMIT 1) LEFT JOIN full_text_checks c ON c.abstract_id=CASE WHEN a.stage=\'abstract\' THEN a.id ELSE a.compared_to END '
+    # Per-topic counts honour every other filter, so the topic list shows what
+    # choosing each topic would leave.
+    topics = {row[0]: row[1] for row in db.execute('SELECT pp.field_id,count(DISTINCT p.id)'+joins+'JOIN paper_projects pp ON pp.paper_id=p.id WHERE '+where+' GROUP BY pp.field_id', params)}
+    if field:
+        where += ' AND EXISTS (SELECT 1 FROM paper_projects fp WHERE fp.paper_id=p.id AND fp.field_id=? COLLATE NOCASE)'
+        params.append(field)
     total = db.execute('SELECT count(*)'+joins+'WHERE '+where, params).fetchone()[0]
     rows = db.execute(
         "SELECT p.id,p.title,p.authors,p.venue,p.year,p.field,p.added,p.modified,p.admission,p.proposed_rel,p.inbox_origin,p.deferred_until,r.agent,a.priority,a.stage,a.confidence,a.assessor,coalesce(a.id,0)||':'||coalesce(c.status,'')||':'||coalesce(c.updated,'') review_revision "+joins+'WHERE '+where+' ORDER BY '+order+',p.id LIMIT ? OFFSET ?',
         [*params, limit, offset],
     ).fetchall()
     papers = [{**dict(row), 'authors':json.loads(row['authors'])} for row in rows]
-    return {'papers':papers, 'total':total, 'counts':counts(db)}
+    return {'papers':papers, 'total':total, 'counts':counts(db), 'topics':topics}
 
 
 def set_admission(db, paper, admission, undo_of=None, assessment_id=None, deferred_until=None):

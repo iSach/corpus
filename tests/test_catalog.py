@@ -54,7 +54,8 @@ def test_batch_arxiv_resolution_uses_one_call_and_retains_per_link_errors(monkey
         return json.dumps({'message':message}).encode()
     monkeypatch.setattr(sources,'_fetch_url',fetch)
     results=Catalog().resolve(['https://arxiv.org/pdf/2501.12345v2.pdf','2501.12345v2','https://publisher.example/doi/10.5555/found','https://example.org/no-identifier'])
-    assert len(calls)==2
+    # One arXiv batch, one Crossref lookup, and one read of the unrecognized page.
+    assert len(calls)==3
     assert all(results[i]['paper']['canonical_url'].endswith('v2') for i in (0,1))
     assert results[2]['paper']['doi']=='10.5555/found'
     assert 'error' in results[3]

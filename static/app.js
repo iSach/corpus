@@ -8,6 +8,11 @@
   const SCORE_KEYS = ['rel', 'cred', 'qual', 'reimpl'];
   const SCORE_LABELS = { rel: 'relevance', cred: 'credibility', qual: 'quality', reimpl: 'reimpl' };
   const FACET_KEYS = ['field', 'state', 'has', 'venue_class', 'year'];
+  const EXPORT_PRESETS = {
+    minimal: { url: 'none', include: { doi: false, eprint: false, keywords: false, scores: false, notes: false, code: false, local_paths: false } },
+    standard: { url: 'best', include: { doi: true, eprint: true, keywords: false, scores: false, notes: false, code: false, local_paths: false } },
+    full: { url: 'best', include: { doi: true, eprint: true, keywords: true, scores: true, notes: true, code: true, local_paths: false } }
+  };
   const VIEW_NAMES = ['ROWS', 'BARS', 'LEDGER'];
   const VIEW_NOTES = ['numeric scores', 'score bars', 'ledger · zebra rows'];
   const ARTIFACT_KINDS = ['pdf', 'code', 'data', 'slides', 'video', 'other'];
@@ -65,7 +70,6 @@
     selectedId: null,
     selectedDetail: null,
     selectedLoading: false,
-    selection: new Set(),
     facetFilters: { field: [], state: [], has: [], venue_class: [], year: [] },
     floors: { rel: null, cred: null, qual: null, reimpl: null },
     view: persistedView,
@@ -88,6 +92,7 @@
     passkeyLoginError: '',
     passwordLoginBusy: false,
     loginPassword: '',
+    loginEmail: (() => { try { return localStorage.getItem('corpus.loginEmail') || ''; } catch (_) { return ''; } })(),
     inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
     smartLists: [],
     smartListsLoaded: false,
@@ -96,7 +101,7 @@
     formError: '',
     duplicateCandidates: [],
     duplicateLoading: false,
-    export: { scope: 'query', format: 'bibtex', include: { scores: true, notes: true, code: false, local_paths: false }, preview: '', filename: '', mime: '', count: 0, loading: false, error: '' },
+    export: { settings: exportDefaults(), papers: [], excluded: new Set(), listLoaded: false, listLoading: false, listError: '', filter: '', preview: '', filename: '', mime: '', count: 0, loading: false, error: '' },
     palette: false,
     paletteFilter: '',
     paletteIndex: 0,
@@ -107,6 +112,7 @@
   let paperRequest = 0;
   let searchTimer = null;
   let exportTimer = null;
+  let exportSaveTimer = null;
   let duplicateTimer = null;
   let statsPromise = null;
   let statsRequest = 0;
@@ -123,6 +129,8 @@
     onAdded: () => { state.papers = []; state.selectedDetail = null; loadStats(true).then(() => { if (state.stats) state.libraryTotal = state.stats.total; render(); }); },
     openPaper: id => navigate('library', id), openInbox: id => navigate('inbox', id)
   });
+
+  const accounts = window.CorpusAccounts({ h, api, render, toast, session: () => state.session });
 
   function h(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -209,7 +217,7 @@
 
   async function api(path, options = {}) {
     const opts = { credentials: 'same-origin', ...options, headers: { ...(options.headers || {}) } };
-    if (options.body && typeof options.body !== 'string') {
+    if (options.body && typeof options.body !== 'string' && !(options.body instanceof Blob)) {
       opts.body = JSON.stringify(options.body);
       opts.headers['Content-Type'] = 'application/json';
     }
@@ -233,10 +241,10 @@
     let screen = url.searchParams.get('screen') || '';
     if (!screen) {
       const segment = path.split('/').filter(Boolean)[0];
-      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox'].includes(segment) ? segment : 'library';
+      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(segment) ? segment : 'library';
     }
     if (screen === 'paper') screen = 'library';
-    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox'].includes(screen)) screen = 'library';
+    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(screen)) screen = 'library';
     return { screen, paperId: url.searchParams.get('paper') || url.searchParams.get('id') || null,
       captureUrl: screen === 'add' ? url.searchParams.get('url') : null,
       captureTitle: screen === 'add' ? url.searchParams.get('title') : null };
@@ -269,9 +277,10 @@
       if (!state.papers.length && state.session && !state.booting) loadPapers();
     } else if (route.screen === 'stats') loadStats();
     else if (route.screen === 'add') { if (!route.paperId) capture.activate(route); loadForm(route.paperId); }
-    else if (route.screen === 'export') scheduleExport();
+    else if (route.screen === 'export') loadExportPage();
     else if (route.screen === 'topics') loadTopics();
     else if (route.screen === 'passkeys') loadPasskeys();
+    else if (route.screen === 'admin' || route.screen === 'account') accounts.load();
     else if (route.screen === 'inbox') { if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
     render();
   }
@@ -356,7 +365,7 @@
     FACET_KEYS.forEach(key => {
       (state.facetFilters[key] || []).forEach(value => {
         if (key === 'venue_class') return; // The query grammar intentionally has no venue-class field.
-        parts.push(`${key === 'has' ? 'has' : key}:${value}`);
+        parts.push(`${key === 'field' ? 'topic' : key}:${value}`);
       });
     });
     Object.entries(state.floors).forEach(([key, value]) => { if (value != null && value > 0) parts.push(`${key}:>=${value}`); });
@@ -387,7 +396,6 @@
     try {
       await api(`/api/paper?id=${encodeURIComponent(paper.id)}`, { method: 'DELETE' });
       ++paperRequest;
-      state.selection.delete(paper.id);
       state.selectedId = null;
       state.selectedDetail = null;
       if (state.offset && state.papers.length === 1) state.offset = Math.max(0, state.offset - state.limit);
@@ -466,6 +474,7 @@
       inbox.papers = data.papers;
       inbox.total = data.total;
       inbox.counts = data.counts;
+      inbox.topics = data.topics || {};
       inbox.error = '';
       if (inbox.focusId) { inbox.selectedId = inbox.focusId; inbox.focusId = null; }
       else if (!inbox.papers.some(paper => paper.id === inbox.selectedId)) inbox.selectedId = inbox.papers.length ? inbox.papers[0].id : null;
@@ -664,15 +673,15 @@
   }
 
   function finishSignIn() {
-    state.session = { authenticated: true };
-    state.loginPassword = '';
-    state.passkeyLoginBusy = false;
-    state.passkeyLoginError = '';
-    state.booting = false;
-    state.smartListsLoaded = false;
-    loadSmartLists();
-    loadStats();
-    activateRoute(routeFromLocation());
+    try { localStorage.setItem('corpus.loginEmail', state.loginEmail); } catch (_) {}
+    window.location.reload();
+  }
+  async function refreshLoginAccount() {
+    try {
+      const config = await api('/api/config?email=' + encodeURIComponent(state.loginEmail));
+      state.config.passkeys = config.passkeys;
+      render();
+    } catch (_) {}
   }
   function cancelPasskeyLogin() {
     if (passkeyAbort) passkeyAbort.abort();
@@ -689,10 +698,10 @@
     state.passkeyLoginError = '';
     render();
     try {
-      const data = await api('/api/passkeys/authenticate/options', { method: 'POST', signal: controller.signal });
+      const data = await api('/api/passkeys/authenticate/options?email=' + encodeURIComponent(state.loginEmail), { method: 'POST', signal: controller.signal });
       const credential = await window.CorpusPasskeys.authenticate(data.options, controller.signal);
       if (controller.signal.aborted) return;
-      await api('/api/passkeys/authenticate/verify', { method: 'POST', body: { challenge_id: data.challenge_id, credential }, signal: controller.signal });
+      await api('/api/passkeys/authenticate/verify?email=' + encodeURIComponent(state.loginEmail), { method: 'POST', body: { challenge_id: data.challenge_id, credential }, signal: controller.signal });
       if (!controller.signal.aborted) finishSignIn();
     } catch (error) {
       if (!controller.signal.aborted) state.passkeyLoginError = error.name === 'NotAllowedError' ? 'Passkey sign-in was canceled. Try again or use your password.' : getError(error);
@@ -709,7 +718,7 @@
     state.passwordLoginBusy = true;
     render();
     try {
-      await api('/api/login', { method: 'POST', body: { password: state.loginPassword } });
+      await api('/api/login', { method: 'POST', body: { email: state.loginEmail, password: state.loginPassword } });
       finishSignIn();
     } catch (error) { toast(getError(error), true); }
     finally { state.passwordLoginBusy = false; render(); }
@@ -734,6 +743,7 @@
       canonical_url: '',
       arxiv_id: '',
       doi: '',
+      openreview_id: '',
       notes: '',
       tags: '',
       scores: { rel: null, cred: null, qual: null, reimpl: null },
@@ -771,6 +781,7 @@
     f.canonical_url = paper.canonical_url || '';
     f.arxiv_id = paper.arxiv_id || '';
     f.doi = paper.doi || '';
+    f.openreview_id = paper.openreview_id || '';
     f.notes = paper.notes || '';
     f.tags = tagsToText(paper.tags);
     SCORE_KEYS.forEach(key => { f.scores[key] = score(paper[key]); f.proposed[key] = score(paper[`proposed_${key}`]); });
@@ -880,7 +891,7 @@
     const payload = {
       title: f.title.trim(), authors: splitAuthors(f.authors), venue: f.venue.trim(), year: number(f.year), field: f.field, projects: f.projects,
       state: f.state || 'unreviewed', starred: Boolean(f.starred), abstract: f.abstract, canonical_url: f.canonical_url,
-      arxiv_id: f.arxiv_id, doi: f.doi, notes: f.notes, tags: splitTags(f.tags),
+      arxiv_id: f.arxiv_id, doi: f.doi, openreview_id: f.openreview_id, notes: f.notes, tags: splitTags(f.tags),
       artifacts: (f.artifacts || []).filter(a => a.url || a.local_path).map(a => ({ kind: a.kind, url: a.url, local_path: a.local_path })),
       rel: score(f.scores.rel), cred: score(f.scores.cred), qual: score(f.scores.qual), reimpl: score(f.scores.reimpl),
       proposed_rel: score(f.proposed.rel), proposed_cred: score(f.proposed.cred), proposed_qual: score(f.proposed.qual), proposed_reimpl: score(f.proposed.reimpl),
@@ -931,11 +942,8 @@
     toast('Draft scores accepted locally; save to persist');
   }
 
-  function selectPaper(id, additive = false) {
+  function selectPaper(id) {
     state.selectedId = id;
-    if (additive) {
-      if (state.selection.has(id)) state.selection.delete(id); else state.selection.add(id);
-    }
     loadPaper(id);
     render();
   }
@@ -990,25 +998,89 @@
     finally { state.sql.loading = false; render(); }
   }
 
+  // Export presets choose what each BibTeX entry contains; style choices
+  // (keys, venue names, capitals…) are kept separately so a preset never
+  // changes citation keys that a manuscript already uses.
+  function exportDefaults() {
+    return { topics: null, format: 'bibtex', sort: 'author', more: false,
+      include: { ...EXPORT_PRESETS.standard.include },
+      bibtex: { url: 'best', keys: 'stored', venue: 'full', authors: 0, protect: 'smart', accents: 'unicode', preprints: 'article' } };
+  }
+  function mergeExportSettings(saved) {
+    const base = exportDefaults();
+    if (!saved || typeof saved !== 'object') return base;
+    return { ...base, ...saved, topics: Array.isArray(saved.topics) ? saved.topics.map(String) : null,
+      include: { ...base.include, ...(saved.include || {}) }, bibtex: { ...base.bibtex, ...(saved.bibtex || {}) } };
+  }
+  function exportPreset(settings) {
+    return Object.keys(EXPORT_PRESETS).find(name => {
+      const preset = EXPORT_PRESETS[name];
+      return preset.url === settings.bibtex.url && Object.entries(preset.include).every(([key, value]) => Boolean(settings.include[key]) === value);
+    }) || 'custom';
+  }
+  function exportTopicSelected(id) {
+    const topics = state.export.settings.topics;
+    return topics == null || topics.includes(id);
+  }
+  function exportTopicPapers() {
+    return state.export.papers.filter(paper => paper.topics.some(exportTopicSelected));
+  }
+  function exportIncludedIds() {
+    return exportTopicPapers().filter(paper => !state.export.excluded.has(paper.id)).map(paper => paper.id);
+  }
+  async function loadExportPage() {
+    const e = state.export;
+    if (e.listLoading) return;
+    e.listLoading = true; e.listError = ''; render();
+    try {
+      const data = await api('/api/export/papers');
+      e.papers = Array.isArray(data.papers) ? data.papers : [];
+      e.excluded = new Set(Array.isArray(data.excluded) ? data.excluded : []);
+      if (!e.listLoaded) e.settings = mergeExportSettings(data.settings);
+      e.listLoaded = true;
+    } catch (error) { e.listError = getError(error); }
+    finally { e.listLoading = false; render(); }
+    if (!e.listError) runExport();
+  }
+  function changeExport(update) {
+    update(state.export.settings);
+    window.clearTimeout(exportSaveTimer);
+    const settings = JSON.parse(JSON.stringify(state.export.settings));
+    exportSaveTimer = window.setTimeout(() => api('/api/export/settings', { method: 'PUT', body: { settings } }).catch(error => toast(`Export settings not saved: ${getError(error)}`, true)), 400);
+    scheduleExport();
+  }
+  async function setExcluded(ids, excluded) {
+    const e = state.export;
+    if (!ids.length) return;
+    const before = new Set(e.excluded);
+    ids.forEach(id => { if (excluded) e.excluded.add(id); else e.excluded.delete(id); });
+    scheduleExport();
+    try { await api('/api/export/exclusions', { method: 'POST', body: { ids, excluded } }); }
+    catch (error) { e.excluded = before; toast(`Not saved: ${getError(error)}`, true); scheduleExport(); }
+  }
   function scheduleExport() {
     window.clearTimeout(exportTimer);
-    exportTimer = window.setTimeout(runExport, 100);
+    render();
+    exportTimer = window.setTimeout(runExport, 120);
   }
+  let exportRequest = 0;
   async function runExport() {
     if (state.screen !== 'export' || (state.config.auth_required && !state.session)) return;
-    state.export.loading = true;
-    state.export.error = '';
-    render();
+    const e = state.export;
+    if (!e.listLoaded) { loadExportPage(); return; }
+    const requestId = ++exportRequest;
+    e.loading = true; e.error = ''; render();
     try {
-      const e = state.export;
-      const body = { scope: e.scope, q: state.q, facets: buildFacetPayload(), ids: [...state.selection], format: e.format, include: e.include };
+      const settings = e.settings;
+      const body = { scope: 'selection', ids: exportIncludedIds(), format: settings.format, include: settings.include, bibtex: settings.bibtex, sort: settings.sort };
       const data = await api('/api/export', { method: 'POST', body });
-      state.export.preview = text(data.text);
-      state.export.filename = data.filename || `corpus.${e.format === 'bibtex' ? 'bib' : e.format}`;
-      state.export.mime = data.mime || 'text/plain;charset=utf-8';
-      state.export.count = Number(data.count || 0);
-    } catch (error) { state.export.error = getError(error); state.export.preview = ''; }
-    finally { state.export.loading = false; render(); }
+      if (requestId !== exportRequest) return;
+      e.preview = text(data.text);
+      e.filename = data.filename || `corpus.${settings.format === 'bibtex' ? 'bib' : settings.format}`;
+      e.mime = data.mime || 'text/plain;charset=utf-8';
+      e.count = Number(data.count || 0);
+    } catch (error) { if (requestId === exportRequest) { e.error = getError(error); e.preview = ''; } }
+    finally { if (requestId === exportRequest) { e.loading = false; render(); } }
   }
   async function copyExport() {
     try { await copyText(state.export.preview || ''); toast('Export copied'); }
@@ -1174,7 +1246,7 @@
       ariaLabel: screen === 'inbox' ? 'Inbox' : null,
       onclick: event => { event.preventDefault(); navigate(screen); }
     }, screen[0].toUpperCase() + screen.slice(1), screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null)));
-    const actions = state.config.auth_required ? [h('button', { class: 'header-action', type: 'button', onclick: () => navigate('passkeys') }, 'PASSKEYS'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
+    const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'PEOPLE') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: () => navigate('passkeys') }, 'PASSKEYS'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
       h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
       nav,
@@ -1234,7 +1306,7 @@
   }
   function renderFacets() {
     const sections = [
-      ['field', 'FIELD'], ['state', 'STATUS'], ['has', 'ARTIFACTS'], ['venue_class', 'VENUE'], ['year', 'YEAR']
+      ['field', 'TOPICS'], ['state', 'STATUS'], ['has', 'ARTIFACTS'], ['venue_class', 'VENUE'], ['year', 'YEAR']
     ].map(([key, title]) => {
       const rows = key === 'field' ? (state.config.fields || []).map(field => ({ value: field.id, count: (state.fieldCounts.find(row => String(row.value) === String(field.id)) || {}).count || 0, visibleCount: (facetRows(key).find(row => String(row.value) === String(field.id)) || {}).count || 0 })) : facetRows(key);
       if (!rows.length) return null;
@@ -1269,10 +1341,11 @@
     const body = state.papers.length ? state.papers.map((paper, index) => {
       const artifacts = artifactKinds(paper);
       const hasCode = artifacts.some(a => String(a.kind).toLowerCase() === 'code');
-      const flag = state.selection.has(paper.id) ? '▪' : paper.state === 'unreviewed' ? '○' : paper.starred ? '★' : '';
+      const flag = paper.starred ? '★' : paper.state === 'unreviewed' ? '○' : '';
+      const flagLabel = paper.starred ? 'Starred' : paper.state === 'unreviewed' ? 'Unreviewed: not yet marked as reviewed' : '';
       const rowClass = `paper-row${state.selectedId != null && String(state.selectedId) === String(paper.id) ? ' selected' : ''}${ledger ? ' zebra' : ''}`;
       return h('div', { class: rowClass, role: 'row', tabIndex: 0, ariaSelected: state.selectedId != null && String(state.selectedId) === String(paper.id), onclick: () => selectPaper(paper.id), onkeydown: event => { if (event.key === 'Enter') { event.preventDefault(); if (event.shiftKey) openPdf(state.selectedDetail || paper); else openCanonical(state.selectedDetail || paper); } } },
-        h('div', { class: 'table-cell gutter' }, flag),
+        h('div', { class: 'table-cell gutter', title: flagLabel, ariaLabel: flagLabel || null }, flag),
         h('div', { class: 'table-cell title' }, h('span', { class: 'title-text', title: paper.title }, fmt(paper.title)), h('span', { class: 'authors' }, authorsToText(paper.authors))),
         h('div', { class: 'table-cell venue', title: paper.venue || '' }, fmt(paper.venue)),
         h('div', { class: 'table-cell year' }, fmt(paper.year)),
@@ -1286,7 +1359,7 @@
       h('span', null, `${state.total ? state.offset + 1 : 0}–${Math.min(state.offset + state.limit, state.total)} / ${state.total}`),
       h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Next page', disabled: state.offset + state.limit >= state.total, onclick: () => { state.offset += state.limit; loadPapers(); } }, '›')
     );
-    return h('main', { class: `table-region ${withBars ? 'bars-view' : ''} ${ledger ? 'ledger-view' : ''}` }, h('div', { class: 'table-scroll', 'data-scroll-key': 'table-scroll' }, h('div', { class: 'paper-table', role: 'table', ariaLabel: 'Paper library' }, head, ...body)), h('div', { class: 'table-footer' }, h('span', null, `sort: ${state.sort || 'rel'} ↓`), h('span', null, 'j/k move · ⏎ open · x select · ⇧⏎ PDF · ⌘k palette'), page, h('span', { class: 'push' }, VIEW_NOTES[state.view])));
+    return h('main', { class: `table-region ${withBars ? 'bars-view' : ''} ${ledger ? 'ledger-view' : ''}` }, h('div', { class: 'table-scroll', 'data-scroll-key': 'table-scroll' }, h('div', { class: 'paper-table', role: 'table', ariaLabel: 'Paper library' }, head, ...body)), h('div', { class: 'table-footer' }, h('span', null, `sort: ${state.sort || 'rel'} ↓`), h('span', null, '○ unreviewed · ★ starred · j/k move · ⏎ open · ⇧⏎ PDF · ⌘k palette'), page, h('span', { class: 'push' }, VIEW_NOTES[state.view])));
   }
 
   function sanitizeHighlightedHTML(value) {
@@ -1357,7 +1430,7 @@
     paperLinks.push(h('button', { class: 'artifact-link', type: 'button', onclick: () => copyPaperBibtex(paper) }, 'bibtex'));
     const noteNode = paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes ? document.createTextNode(paper.notes) : h('span', { class: 'soft' }, 'No note');
     return h('aside', { class: 'detail-pane', 'data-scroll-key': 'detail-pane' },
-      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
+      h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.openreview_id || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
       renderPublication(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
@@ -1452,13 +1525,17 @@
       class: 'toolbar-button inbox-tab', type: 'button', 'aria-pressed': String(inbox.status === value), disabled: inbox.busy,
       onclick: () => changeView('status', value)
     }, `${label} (${inbox.counts[value] || 0})`)));
-    const filter = (key, title, label, choices) => h('section', { class: 'facet-section' },
-      h('label', { class: 'facet-title', for: `inbox-${key}` }, title),
-      h('select', { id: `inbox-${key}`, class: 'select', ariaLabel: label, onchange: event => changeView(key, event.target.value) },
-        ...choices.map(([value, caption]) => h('option', { value, selected: inbox[key] === value }, caption))));
+    // Short option lists read better as visible choices than as dropdowns.
+    const filter = (key, title, label, choices) => h('section', { class: 'facet-section', role: 'radiogroup', ariaLabel: label },
+      h('div', { class: 'facet-title' }, title),
+      ...choices.map(([value, caption, count]) => h('label', { class: `facet-option${count === 0 ? ' facet-option-empty' : ''}` },
+        h('input', { type: 'radio', name: `inbox-${key}`, value, checked: inbox[key] === value, onchange: () => changeView(key, value) }),
+        h('span', { class: 'facet-label' }, caption),
+        count == null ? null : h('span', { class: 'facet-count' }, count))));
+    const topicCounts = inbox.topics || {};
     const filterCount = [inbox.field, inbox.evidence, inbox.origin].filter(Boolean).length;
     const filters = h('aside', { id: 'inbox-filters', class: 'facet-rail inbox-filter-rail', ariaLabel: 'Discovery filters' },
-      filter('field', 'TOPIC', 'Inbox topic', [['', 'All topics'], ...(state.config.fields || []).map(field => [field.id, field.label])]),
+      filter('field', 'TOPIC', 'Inbox topic', [['', 'All topics'], ...(state.config.fields || []).map(field => [field.id, projectName(field.id), topicCounts[field.id] || 0])]),
       filter('evidence', 'EVIDENCE', 'Inbox evidence', [['','All evidence'],['unassessed','Awaiting assessment'],['abstract','Abstract only'],['ready','Ready to inspect'],['full_text','Full text checked'],['unavailable','Unavailable']]),
       filter('origin', 'DISCOVERY', 'Discovery origin', [['','All discoveries'],['existing','Existing imports'],['discovery','New discoveries']]),
       filter('sort', 'ORDER', 'Inbox order', [['relevance','Suggested relevance'],['newest','Newest first'],['oldest','Oldest first']]),
@@ -1496,7 +1573,7 @@
       detail = h('article', { class: 'inbox-paper' },
         h('header', { class: 'detail-header inbox-paper-header' },
           h('button', { class: 'btn btn-quiet inbox-mobile-back', type: 'button', ariaLabel: 'Back to papers', onclick: () => { inbox.mobileList = true; inbox.filtersOpen = false; render(); } }, '← PAPERS'),
-          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.id), h('span', null, projectName(paper.field))),
+          h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.openreview_id || paper.id), h('span', null, projectName(paper.field))),
           h('h1', { class: 'detail-title inbox-paper-title' }, paper.title),
           h('div', { class: 'detail-meta inbox-paper-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} · ${fmt(paper.year)}`),
           h('div', { class: 'artifact-list' }, paper.canonical_url ? h('a', { class: 'artifact-link', href: paper.canonical_url, target: '_blank', rel: 'noopener' }, 'SOURCE ↗') : null, ...links,
@@ -1531,7 +1608,7 @@
     const stats = state.stats || {};
     const fields = Array.isArray(stats.fields) ? stats.fields : [];
     const maxField = Math.max(1, ...fields.map(f => Number(f.count || 0)));
-    const fieldPanel = h('section', { class: 'stats-panel' }, h('div', { class: 'panel-title' }, 'COUNTS BY FIELD'), fields.length ? fields.map(field => h('div', { class: 'field-stat' }, h('span', { class: 'field-stat-name', title: field.label || field.field }, field.label || field.field || 'unfiled'), h('span', { class: 'field-stat-track' }, h('i', { style: { width: `${Number(field.count || 0) / maxField * 100}%` } })), h('span', { class: 'field-stat-count' }, field.count || 0))) : h('div', { class: 'empty' }, 'No field counts yet.'));
+    const fieldPanel = h('section', { class: 'stats-panel' }, h('div', { class: 'panel-title' }, 'COUNTS BY TOPIC'), fields.length ? fields.map(field => h('div', { class: 'field-stat' }, h('span', { class: 'field-stat-name', title: field.label || field.field }, field.label || field.field || 'unfiled'), h('span', { class: 'field-stat-track' }, h('i', { style: { width: `${Number(field.count || 0) / maxField * 100}%` } })), h('span', { class: 'field-stat-count' }, field.count || 0))) : h('div', { class: 'empty' }, 'No topic counts yet.'));
     const distributions = stats.distributions || {};
     const distPanel = h('section', { class: 'stats-panel' }, h('div', { class: 'panel-title' }, 'SCORE DISTRIBUTIONS · 0–10'), ...SCORE_KEYS.map(key => {
       const dist = distributions[key] || {};
@@ -1569,7 +1646,7 @@
   }
   function renderArtifactEditor() {
     const rows = state.form.artifacts || [];
-    return h('div', { class: 'form-section' }, h('div', { class: 'form-section-label' }, 'ARTIFACTS'), h('div', { class: 'artifact-editor' }, ...rows.map((artifact, index) => h('div', { class: 'artifact-editor-row' }, h('select', { id: `artifact-${index}-kind`, 'data-focus-key': `artifact-${index}-kind`, class: 'select', value: artifact.kind, ariaLabel: `Artifact ${index + 1} kind`, onchange: event => { artifact.kind = event.target.value; } }, ...ARTIFACT_KINDS.map(kind => h('option', { value: kind, selected: artifact.kind === kind }, kind))), h('input', { id: `artifact-${index}-url`, 'data-focus-key': `artifact-${index}-url`, class: 'input', value: artifact.url || '', placeholder: 'URL', ariaLabel: `Artifact ${index + 1} URL`, oninput: event => { artifact.url = event.target.value; } }), h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Remove artifact', onclick: () => { state.form.artifacts.splice(index, 1); render(); } }, '×'))), h('button', { class: 'btn btn-quiet', type: 'button', onclick: () => { state.form.artifacts.push({ kind: 'pdf', url: '', local_path: '', fetch_status: '' }); render(); } }, '+ ARTIFACT')));
+    return h('div', { class: 'form-section' }, h('div', { class: 'form-section-label' }, 'ARTIFACTS'), h('div', { class: 'artifact-editor' }, ...rows.map((artifact, index) => h('div', { class: 'artifact-editor-row' }, h('select', { id: `artifact-${index}-kind`, 'data-focus-key': `artifact-${index}-kind`, class: 'select', value: artifact.kind, ariaLabel: `Artifact ${index + 1} kind`, onchange: event => { artifact.kind = event.target.value; } }, ...ARTIFACT_KINDS.map(kind => h('option', { value: kind, selected: artifact.kind === kind }, kind))), /^upload:/.test(artifact.url || '') ? h('input', { id: `artifact-${index}-url`, class: 'input', value: 'Imported PDF file', readonly: true, ariaLabel: `Artifact ${index + 1} URL` }) : h('input', { id: `artifact-${index}-url`, 'data-focus-key': `artifact-${index}-url`, class: 'input', value: artifact.url || '', placeholder: 'URL', ariaLabel: `Artifact ${index + 1} URL`, oninput: event => { artifact.url = event.target.value; } }), h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Remove artifact', onclick: () => { state.form.artifacts.splice(index, 1); render(); } }, '×'))), h('button', { class: 'btn btn-quiet', type: 'button', onclick: () => { state.form.artifacts.push({ kind: 'pdf', url: '', local_path: '', fetch_status: '' }); render(); } }, '+ ARTIFACT')));
   }
   function renderAdd() {
     if (!state.routePaperId && capture.state.mode !== 'manual') return capture.render();
@@ -1583,7 +1660,7 @@
       formInput('AUTHORS', 'authors', { placeholder: 'Author; Author; …' }),
       formInput('VENUE', 'venue', { placeholder: 'Venue' }),
       formInput('YEAR', 'year', { type: 'number', placeholder: 'Year' }),
-      h('div', { class: 'form-line' }, h('div', { class: 'form-label' }, 'PROJECTS'), h('div', { class: 'form-control form-projects', role: 'group', ariaLabel: 'Paper projects' }, ...fields.map(field => h('label', null,
+      h('div', { class: 'form-line' }, h('div', { class: 'form-label' }, 'TOPICS'), h('div', { class: 'form-control form-projects', role: 'group', ariaLabel: 'Paper topics' }, ...fields.map(field => h('label', null,
         h('input', { type: 'checkbox', checked: state.form.projects.includes(field.id), onchange: event => {
           state.form.projects = event.target.checked ? [...state.form.projects, field.id] : state.form.projects.filter(id => id !== field.id);
           if (!state.form.projects.includes(state.form.field)) state.form.field = state.form.projects[0] || '';
@@ -1594,6 +1671,7 @@
       formInput('CANONICAL URL', 'canonical_url', { placeholder: 'https://…' }),
       formInput('ARXIV ID', 'arxiv_id'),
       formInput('DOI', 'doi'),
+      formInput('OPENREVIEW ID', 'openreview_id'),
       formInput('TAGS', 'tags', { placeholder: 'comma, separated, tags' }),
       formInput('ABSTRACT', 'abstract', { multiline: true, rows: 4 }),
       renderScoreEditor(),
@@ -1613,20 +1691,105 @@
   }
 
   function renderExport() {
-    const e = state.export;
-    const scopes = [['query', `current query (${state.total})`], ['all', `whole library (${state.libraryTotal || 0})`], ['selection', `selection (${state.selection.size})`]];
-    const formats = [['bibtex', 'BIBTEX'], ['json', 'JSON'], ['csv', 'CSV']];
-    const includeItems = [['scores', 'my scores as keywords'], ['notes', 'notes as annotations'], ['code', 'code / data URLs'], ['local_paths', 'local pdf paths']];
-    return h('div', { class: 'export-layout', 'data-scroll-key': 'export-layout' },
-      h('section', { class: 'export-options' },
-        h('div', { class: 'panel-title' }, 'SCOPE'), h('div', { class: 'scope-list' }, ...scopes.map(([value, label]) => h('label', null, h('input', { type: 'radio', name: 'export-scope', checked: e.scope === value, onchange: () => { e.scope = value; scheduleExport(); } }), label))),
-        h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'FORMAT'), h('div', { class: 'format-tabs' }, ...formats.map(([value, label]) => h('button', { class: `format-tab${e.format === value ? ' active' : ''}`, type: 'button', onclick: () => { e.format = value; scheduleExport(); } }, label))),
-        h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'INCLUDE'), h('div', { class: 'include-list' }, ...includeItems.map(([key, label]) => h('label', null, h('input', { type: 'checkbox', checked: Boolean(e.include[key]), onchange: event => { e.include[key] = event.target.checked; scheduleExport(); } }), label))),
-        h('div', { class: 'export-actions' }, h('button', { class: 'btn btn-primary', type: 'button', disabled: e.loading || !e.preview, onclick: downloadExport }, `DOWNLOAD .${e.format === 'bibtex' ? 'bib' : e.format}`), h('button', { class: 'btn', type: 'button', disabled: !e.preview, onclick: copyExport }, 'COPY')),
-        e.error ? h('div', { class: 'status-line error-text', style: { marginTop: '7px' } }, e.error) : h('div', { class: 'status-line', style: { marginTop: '7px' } }, e.loading ? 'Generating…' : `${e.count || 0} rows · ${e.filename || ''}`)
-      ),
-      h('pre', { class: `preview${e.preview ? '' : ' preview-empty'}` }, e.preview || (e.loading ? 'Generating export…' : 'Choose a scope and format to preview the export.'))
-    );
+    const e = state.export, settings = e.settings;
+    const bibtex = settings.format === 'bibtex';
+    const topics = state.config.fields || [];
+    const choices = (name, label, current, options, onPick, hint) => h('div', { class: 'export-choice' },
+      h('div', { class: 'facet-title', id: `export-${name}-label` }, label),
+      h('div', { class: 'segmented', role: 'group', 'aria-labelledby': `export-${name}-label` }, ...options.map(([value, caption, title]) => h('button', {
+        class: 'segment', type: 'button', title: title || null, 'aria-pressed': String(current === value), onclick: () => onPick(value)
+      }, caption))),
+      hint ? h('p', { class: 'export-hint' }, hint) : null);
+    const check = (key, label) => h('label', { class: 'facet-option' }, h('input', { type: 'checkbox', checked: Boolean(settings.include[key]), onchange: event => changeExport(s => { s.include[key] = event.target.checked; }) }), h('span', { class: 'facet-label' }, label));
+    const setBib = key => value => changeExport(s => { s.bibtex[key] = value; });
+
+    // Topic counts come from the list the page already has; a paper in two
+    // topics counts in both.
+    const countFor = id => e.papers.filter(paper => paper.topics.includes(id)).length;
+    const toggleTopic = (id, on) => changeExport(s => {
+      const current = s.topics == null ? topics.map(topic => topic.id) : s.topics;
+      const next = on ? [...new Set([...current, id])] : current.filter(value => value !== id);
+      s.topics = topics.every(topic => next.includes(topic.id)) ? null : next;
+    });
+    const topicRail = h('section', { class: 'facet-section' },
+      h('div', { class: 'facet-title export-rail-heading' }, h('span', null, 'TOPICS'),
+        h('span', { class: 'export-mini-actions' },
+          h('button', { class: 'text-button', type: 'button', onclick: () => changeExport(s => { s.topics = null; }) }, 'all'),
+          h('button', { class: 'text-button', type: 'button', onclick: () => changeExport(s => { s.topics = []; }) }, 'none'))),
+      ...topics.map(topic => h('label', { class: `facet-option${countFor(topic.id) ? '' : ' facet-option-empty'}` },
+        h('input', { type: 'checkbox', checked: exportTopicSelected(topic.id), onchange: event => toggleTopic(topic.id, event.target.checked) }),
+        h('span', { class: 'facet-label' }, projectName(topic.id)),
+        h('span', { class: 'facet-count' }, countFor(topic.id)))));
+
+    const preset = exportPreset(settings);
+    const optionRail = h('section', { class: 'facet-section export-options-section' },
+      choices('format', 'FORMAT', settings.format, [['bibtex', 'BibTeX'], ['json', 'JSON'], ['csv', 'CSV']], value => changeExport(s => { s.format = value; })),
+      bibtex ? choices('preset', 'CONTENT', preset, [['minimal', 'Minimal', 'Author, title, venue and year only — what most conference templates need'], ['standard', 'Standard', 'Adds a link, DOI and arXiv eprint'], ['full', 'Full', 'Also keeps topics, tags, your scores, notes and code links']],
+        value => changeExport(s => { s.bibtex.url = EXPORT_PRESETS[value].url; s.include = { ...s.include, ...EXPORT_PRESETS[value].include }; }),
+        preset === 'custom' ? 'Custom: adjusted below.' : null) : null,
+      bibtex ? choices('url', 'LINK', settings.bibtex.url, [['none', 'None'], ['arxiv', 'arXiv'], ['published', 'Published', 'DOI or publisher page; nothing for preprints'], ['best', 'Best', 'Published version when known, otherwise arXiv']], setBib('url')) : null,
+      h('div', { class: 'export-choice' }, h('div', { class: 'facet-title' }, 'INCLUDE'),
+        bibtex ? check('doi', 'DOI') : null,
+        bibtex ? check('eprint', 'arXiv eprint') : null,
+        bibtex ? check('keywords', 'topics & tags as keywords') : null,
+        check('scores', bibtex ? 'my scores as keywords' : 'my scores'),
+        check('notes', bibtex ? 'notes as annotations' : 'notes'),
+        check('code', 'code / data links'),
+        check('local_paths', 'local PDF paths')),
+      choices('sort', 'ORDER', settings.sort, [['author', 'Author'], ['year', 'Year'], ['added', 'Added'], ['key', 'Key']], value => changeExport(s => { s.sort = value; })),
+      bibtex ? h('details', { class: 'export-more', open: settings.more },
+        h('summary', { onclick: event => { event.preventDefault(); changeExport(s => { s.more = !s.more; }); } }, 'Style'),
+        h('div', { class: 'export-more-body' },
+        choices('keys', 'CITATION KEYS', settings.bibtex.keys, [['stored', 'Stored', 'Keys saved with each paper, e.g. vaswani2017_3f2a…; never change'], ['short', 'Short', 'authorYEARword, e.g. vaswani2017attention']], setBib('keys'),
+          settings.bibtex.keys === 'short' ? 'Switching keys breaks \\cite commands that use the other style.' : null),
+        choices('venue', 'VENUE NAMES', settings.bibtex.venue, [['full', 'Full'], ['short', 'Short', 'NeurIPS, ICML, ICLR… for common venues']], setBib('venue')),
+        choices('authors', 'AUTHORS', settings.bibtex.authors, [[0, 'All'], [10, '10'], [5, '5'], [3, '3']], setBib('authors'), settings.bibtex.authors ? `Longer lists end with “and others”.` : null),
+        choices('protect', 'TITLE CAPITALS', settings.bibtex.protect, [['smart', 'Acronyms', 'Brace PDE, ResNet, 3D… so styles keep their capitals'], ['all', 'Whole title', 'Keep the title exactly as written'], ['none', 'Off', 'Let the bibliography style change case']], setBib('protect')),
+        choices('accents', 'ACCENTS', settings.bibtex.accents, [['unicode', 'Unicode', 'ü as is; fine with biber or a UTF-8 bibtex'], ['latex', 'LaTeX', 'ü as {\\"u} for classic BibTeX']], setBib('accents')),
+        choices('preprints', 'PREPRINTS', settings.bibtex.preprints, [['article', '@article', 'journal = {arXiv preprint arXiv:…}, as Google Scholar does'], ['misc', '@misc', 'howpublished = {arXiv preprint arXiv:…}']], setBib('preprints')))) : null);
+
+    const pool = exportTopicPapers();
+    const filter = e.filter.trim().toLowerCase();
+    const visible = filter ? pool.filter(paper => `${paper.title} ${paper.authors.join(' ')} ${paper.venue || ''} ${paper.year || ''}`.toLowerCase().includes(filter)) : pool;
+    const included = pool.filter(paper => !e.excluded.has(paper.id)).length;
+    const authorLine = paper => {
+      const first = paper.authors[0] ? paper.authors[0].split(',')[0].trim().split(/\s+/).pop() : '';
+      return [first ? `${first}${paper.authors.length > 1 ? ' et al.' : ''}` : '', paper.year, paper.venue].filter(Boolean).join(' · ');
+    };
+    const symbols = paper => paper.topics.map(id => (topics.find(topic => topic.id === id) || {}).symbol).filter(Boolean).map(projectSymbol);
+    const rows = visible.map(paper => {
+      const on = !e.excluded.has(paper.id);
+      return h('label', { class: `export-paper${on ? '' : ' excluded'}` },
+        h('input', { type: 'checkbox', checked: on, ariaLabel: `Include ${paper.title}`, onchange: event => setExcluded([paper.id], !event.target.checked) }),
+        h('span', { class: 'export-paper-copy' }, h('span', { class: 'export-paper-title' }, paper.title), h('span', { class: 'export-paper-meta' }, h('span', { class: 'export-paper-symbols' }, ...symbols(paper)), authorLine(paper))));
+    });
+    const papersPanel = h('section', { class: 'export-papers', ariaLabel: 'Papers to export' },
+      h('header', { class: 'export-panel-head' },
+        h('div', { class: 'panel-title' }, 'PAPERS'),
+        h('span', { class: 'export-count', role: 'status' }, `${included} of ${pool.length} included`),
+        h('span', { class: 'export-mini-actions' },
+          h('button', { class: 'text-button', type: 'button', disabled: !visible.length, onclick: () => setExcluded(visible.filter(p => e.excluded.has(p.id)).map(p => p.id), false) }, 'all'),
+          h('button', { class: 'text-button', type: 'button', disabled: !visible.length, onclick: () => setExcluded(visible.filter(p => !e.excluded.has(p.id)).map(p => p.id), true) }, 'none'))),
+      h('div', { class: 'export-filter' }, h('input', { id: 'export-filter', class: 'input', type: 'search', placeholder: 'Filter papers…', ariaLabel: 'Filter papers', value: e.filter, oninput: event => { e.filter = event.target.value; render(); } })),
+      h('div', { class: 'export-paper-list', 'data-scroll-key': 'export-papers' },
+        e.listError ? h('div', { class: 'notice error-text', role: 'alert' }, e.listError, ' ', h('button', { class: 'btn', type: 'button', onclick: loadExportPage }, 'Retry'))
+          : rows.length ? rows : h('div', { class: 'empty' }, e.listLoading && !e.listLoaded ? 'Loading papers…' : !pool.length ? 'Choose a topic to list its papers.' : 'No papers match the filter.')),
+      h('footer', { class: 'export-panel-foot' }, 'Unticked papers stay in your library and stay out of exports until you tick them again.'));
+
+    const extension = settings.format === 'bibtex' ? 'bib' : settings.format;
+    const codePanel = h('section', { class: 'export-output', ariaLabel: 'Export preview' },
+      h('header', { class: 'export-panel-head' },
+        h('div', { class: 'panel-title' }, 'OUTPUT'),
+        h('span', { class: 'export-count', role: 'status' }, e.error ? '' : e.loading ? 'Generating…' : `${e.count} ${e.count === 1 ? 'entry' : 'entries'} · ${e.filename || `corpus.${extension}`}`),
+        h('span', { class: 'export-actions' },
+          h('button', { class: 'btn', type: 'button', disabled: !e.preview, onclick: copyExport }, 'COPY'),
+          h('button', { class: 'btn btn-primary', type: 'button', disabled: e.loading || !e.preview, onclick: downloadExport }, `DOWNLOAD .${extension}`))),
+      e.error ? h('div', { class: 'notice error-text', role: 'alert' }, e.error) : null,
+      h('pre', { class: `preview${e.preview ? '' : ' preview-empty'}`, 'data-scroll-key': 'export-preview' }, e.preview || (e.loading || !e.listLoaded ? 'Generating export…' : 'Nothing to export: tick a topic and at least one paper.')));
+
+    return h('div', { class: 'export-layout' },
+      h('aside', { class: 'facet-rail export-rail', ariaLabel: 'Export settings', 'data-scroll-key': 'export-rail' }, topicRail, optionRail),
+      papersPanel, codePanel);
   }
 
   function closeTopicEditor() {
@@ -1672,10 +1835,10 @@
         h('label', { for: 'topic-id' }, 'Topic ID'),
         h('input', { id: 'topic-id', class: 'input', value: form.id, required: true, disabled: form.existing, maxlength: 80, pattern: '[a-zA-Z0-9][a-zA-Z0-9_-]*', 'aria-describedby': 'topic-id-help', placeholder: 'uncertainty-calibration', oninput: event => { form.id = event.target.value; } }),
         h('p', { id: 'topic-id-help', class: 'topic-help' }, form.existing ? 'Permanent identifier used in search and paper links.' : 'Use letters, numbers, hyphens or underscores. This cannot be changed later.'),
-        h('fieldset', { class: 'symbol-picker' }, h('legend', null, 'Project symbol'),
+        h('fieldset', { class: 'symbol-picker' }, h('legend', null, 'Topic symbol'),
           h('div', { class: 'symbol-options' }, ...[['', 'None'], ...Object.keys(PROJECT_SYMBOLS).map(symbol => [symbol, symbol[0].toUpperCase() + symbol.slice(1)])].map(([symbol, label]) =>
             h('label', { class: 'symbol-choice', title: label }, h('input', { id: `topic-symbol-${symbol || 'none'}`, type: 'radio', name: 'topic-symbol', value: symbol, ariaLabel: label, checked: (form.symbol || '') === symbol, onchange: () => { form.symbol = symbol; } }), h('span', { class: 'symbol-tile' }, projectSymbol(symbol) || '—'), h('span', { class: 'symbol-choice-name' }, label)))),
-          h('p', { class: 'topic-help' }, 'Distinct shapes keep projects recognizable without relying on color.')),
+          h('p', { class: 'topic-help' }, 'Distinct shapes keep topics recognizable without relying on color.')),
         h('label', { for: 'topic-description' }, 'Research description'),
         h('textarea', { id: 'topic-description', class: 'input topic-description-input', value: form.description, rows: 4, maxlength: 20000, placeholder: 'What questions does this topic cover?', oninput: event => { form.description = event.target.value; } }),
         h('label', { for: 'topic-criteria' }, 'Relevance criteria'),
@@ -1685,7 +1848,7 @@
       h('footer', { class: 'topic-editor-actions' }, h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, onclick: () => { if (closeTopicEditor()) render(); } }, 'Cancel'), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.topicSaving }, state.topicSaving ? 'Saving…' : 'Save topic'))
     ) : null;
     return h('main', { class: `topics-layout${form ? ' editing' : ''}` },
-      h('header', { class: 'topics-header' }, h('div', null, h('h1', null, 'Topics'), h('p', null, 'Organize projects, assign symbols, and define what makes a paper relevant.')),
+      h('header', { class: 'topics-header' }, h('div', null, h('h1', null, 'Topics'), h('p', null, 'Organize your research topics, assign symbols, and define what makes a paper relevant.')),
         h('button', { class: 'btn btn-primary', type: 'button', disabled: state.topicSaving, onclick: () => editTopic() }, '+ New topic')),
       h('div', { class: 'topics-workspace' },
         h('section', { class: 'topic-list', ariaLabel: 'Research topics' },
@@ -1696,7 +1859,7 @@
   }
 
   function syntaxHelp() {
-    return 'term · field:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred · is:venue-proposed\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:-added';
+    return 'term · topic:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred · is:venue-proposed\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:-added';
   }
 
   function renderPasskeys() {
@@ -1757,6 +1920,8 @@
   }
 
   function renderScreen() {
+    if (state.screen === 'admin') return accounts.renderAdmin();
+    if (state.screen === 'account') return accounts.renderAccount();
     if (state.screen === 'stats') return renderStats();
     if (state.screen === 'add') return renderAdd();
     if (state.screen === 'export') return renderExport();
@@ -1770,6 +1935,7 @@
     const paletteHadFocus = Boolean(restore.focus && restore.focus.key === 'palette-input');
     document.querySelectorAll('.palette-backdrop').forEach(node => node.remove());
     if (state.booting) { clear(root); root.appendChild(h('div', { class: 'loading-state' }, 'Loading Corpus…')); return; }
+    if (accounts.hasInvitation()) { clear(root); root.appendChild(accounts.renderInvitation()); restoreRenderState(restore); return; }
     if (state.config.auth_required && (!state.session || !state.session.authenticated)) { renderGate(); return; }
     clear(root);
     root.appendChild(renderHeader());
@@ -1794,6 +1960,7 @@
     ) : null;
     const form = h('form', { class: 'gate-form', onsubmit: event => { event.preventDefault(); signInWithPassword(); } },
       h('div', { class: 'gate-brand' }, 'Corpus'), h('div', { class: 'gate-copy' }, 'Sign in to your research library.'), passkey,
+      h('label', { for: 'login-email' }, 'EMAIL'), h('input', { class: 'input', id: 'login-email', type: 'email', autocomplete: 'username', value: state.loginEmail, placeholder: 'Leave blank for the administrator', oninput: event => { state.loginEmail = event.target.value; }, onchange: refreshLoginAccount }),
       h('label', { for: 'password' }, 'PASSWORD'), h('input', { class: 'input', id: 'password', type: 'password', autocomplete: 'current-password', value: state.loginPassword, required: true, oninput: event => { state.loginPassword = event.target.value; } }),
       h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.passwordLoginBusy }, 'ENTER')
     );
@@ -1803,10 +1970,16 @@
   async function logout() {
     autoPasskeyAttempted = true;
     cancelPasskeyLogin();
-    try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
-    state.session = { authenticated: false };
-    state.passkeySettings.password = '';
-    render();
+    try {
+      await api('/api/logout', { method: 'POST' });
+      state.session = { authenticated: false };
+      state.papers = []; state.selectedDetail = null; state.selectedId = null;
+      state.stats = null; state.topics = []; state.smartLists = [];
+      state.form = null; state.sql.result = null; state.export.preview = '';
+      state.inbox.papers = []; state.inbox.detail = null;
+      state.passkeySettings.password = ''; state.passkeySettings.keys = [];
+      render();
+    } catch (error) { toast(getError(error), true); }
   }
 
   function moveSelection(delta) {
@@ -1841,7 +2014,6 @@
     if (state.screen !== 'library') return;
     if (event.key === 'j') { event.preventDefault(); moveSelection(1); }
     else if (event.key === 'k') { event.preventDefault(); moveSelection(-1); }
-    else if (event.key === 'x' && state.selectedId) { event.preventDefault(); selectPaper(state.selectedId, true); }
     else if (event.key === 'Enter' && state.selectedId) { event.preventDefault(); const paper = state.selectedDetail || state.papers.find(row => String(row.id) === String(state.selectedId)); if (event.shiftKey) openPdf(paper); else openCanonical(paper); }
   }
 
@@ -1850,9 +2022,10 @@
     state.screen = route.screen;
     state.routePaperId = route.paperId;
     try {
-      const [config, session] = await Promise.all([api('/api/config'), api('/api/session')]);
+      const [config, session] = await Promise.all([api('/api/config?email=' + encodeURIComponent(state.loginEmail)), api('/api/session')]);
       state.config = { fields: Array.isArray(config && config.fields) ? config.fields : [], auth_required: Boolean(config && config.auth_required), passkeys: config.passkeys || { enabled: false, registered: false } };
       state.session = session || { authenticated: !state.config.auth_required };
+      if (accounts.hasInvitation()) { await accounts.inspect(); state.booting = false; render(); return; }
       state.booting = false;
       render();
       if (state.config.auth_required && !state.session.authenticated) { tryDefaultPasskey(); return; }
@@ -1870,6 +2043,33 @@
     }
   }
 
+  // Dropping PDFs anywhere in the signed-in app imports them on the Add screen.
+  const signedIn = () => Boolean(state.session && state.session.authenticated) || (!state.config.auth_required && !state.booting);
+  const carriesFiles = event => Boolean(event.dataTransfer && [...(event.dataTransfer.types || [])].includes('Files'));
+  let dragDepth = 0;
+  function showDropTarget(visible) { document.body.classList.toggle('pdf-drop-active', visible); }
+  window.addEventListener('dragenter', event => {
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault(); dragDepth += 1; showDropTarget(true);
+  });
+  window.addEventListener('dragover', event => {
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', event => {
+    if (!carriesFiles(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) showDropTarget(false);
+  });
+  window.addEventListener('drop', event => {
+    dragDepth = 0; showDropTarget(false);
+    if (!carriesFiles(event) || !signedIn()) return;
+    event.preventDefault();
+    const files = [...event.dataTransfer.files];
+    if (!files.some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''))) { toast('Only PDF files can be imported', true); return; }
+    if (state.screen !== 'add' || state.routePaperId) navigate('add');
+    capture.importPdfs(files);
+  });
   window.addEventListener('popstate', () => activateRoute(routeFromLocation()));
   window.addEventListener('focus', refreshDiscoveries);
   document.addEventListener('visibilitychange', refreshDiscoveries);

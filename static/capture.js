@@ -4,9 +4,9 @@
   window.CorpusCapture = function ({ h, api, render, toast, fields, projectSymbol, currentProjects, onAdded, openPaper, openInbox, onProjects }) {
     const c = { mode: 'search', query: '', input: '', searchIn: 'all', projects: [], initialized: false, expanded: null,
       items: [], selected: new Set(), focused: null, offset: 0, states: {}, errors: [], busy: false,
-      projectsOpen: false, generation: 0, controller: null, timer: null, lastArxiv: 0, more: false, fallbackTitle: '' };
+      projectsOpen: false, generation: 0, controller: null, timer: null, lastArxiv: 0, more: false, fallbackTitle: '', pdfProgress: '' };
     const label = id => (fields().find(field => field.id === id) || {}).label || id;
-    const key = paper => paper.arxiv_id ? `arxiv:${paper.arxiv_id}` : paper.doi ? `doi:${paper.doi.toLowerCase()}` : `title:${paper.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')}`;
+    const key = paper => paper.arxiv_id ? `arxiv:${paper.arxiv_id}` : paper.doi ? `doi:${paper.doi.toLowerCase()}` : paper.openreview_id ? `openreview:${paper.openreview_id}` : `title:${paper.title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')}`;
     const validProjects = values => Array.isArray(values) ? [...new Set(values.filter(id => fields().some(field => field.id === id)))] : [];
     function initialize() {
       if (c.initialized) return;
@@ -51,6 +51,7 @@
           if (!previous.paper.abstract && paper.abstract) previous.paper.abstract = paper.abstract;
           if (!previous.paper.doi && paper.doi) previous.paper.doi = paper.doi;
           if (!previous.paper.arxiv_id && paper.arxiv_id) previous.paper.arxiv_id = paper.arxiv_id;
+          if (!previous.paper.openreview_id && paper.openreview_id) previous.paper.openreview_id = paper.openreview_id;
           (paper.artifacts || []).forEach(artifact => { if (!(previous.paper.artifacts || []).some(old => old.kind === artifact.kind && old.url === artifact.url)) { previous.paper.artifacts = [...(previous.paper.artifacts || []), artifact]; } });
           if (!previous.paper.existing && paper.existing) previous.paper.existing = paper.existing;
           return;
@@ -145,6 +146,41 @@
       } catch (error) { if (generation === c.generation && error.name !== 'AbortError') c.errors.push(error.message); }
       finally { if (generation === c.generation) { c.states = {}; render(); } }
     }
+    const MATCHES = { library: 'Already saved', arxiv: 'Found on arXiv', crossref: 'Found on Crossref' };
+    function matchNote(response) {
+      const { source, via } = response.match || {};
+      const found = source === 'pdf' ? 'Not found online · a new entry is made from the PDF; check its details after adding' : `${MATCHES[source] || 'Found'} by its ${via}`;
+      return [found, ...(response.notes || [])].join(' · ');
+    }
+    async function importPdfs(fileList) {
+      initialize();
+      const files = [...(fileList || [])].filter(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+      const skipped = [...(fileList || [])].length - files.length;
+      if (c.mode !== 'pdf' || c.busy) { cancel(); c.mode = 'pdf'; c.items = []; c.selected.clear(); c.focused = null; }
+      else cancel();
+      c.errors = skipped ? [`${skipped} file${skipped === 1 ? ' is' : 's are'} not a PDF and ${skipped === 1 ? 'was' : 'were'} skipped.`] : [];
+      if (!files.length) { render(); return; }
+      if (files.length > 20) { c.errors.push('Import up to 20 PDFs at a time.'); render(); return; }
+      const generation = c.generation;
+      c.controller = new AbortController();
+      const signal = c.controller.signal;
+      c.states = { pdf: 'loading' };
+      try {
+        for (const [index, file] of files.entries()) {
+          c.pdfProgress = `Reading ${file.name} (${index + 1} of ${files.length})…`; render();
+          try {
+            const response = await api(`/api/catalog/pdf?${new URLSearchParams({ name: (file.name || '').slice(0, 300) })}`, { method: 'POST', signal, body: file, headers: { 'Content-Type': 'application/pdf' } });
+            if (generation !== c.generation) return;
+            merge([response.paper], true);
+            const item = c.items.find(row => row.paper === response.paper || (response.paper.upload && row.paper.upload === response.paper.upload) || row.key === key(response.paper));
+            if (item) { item.note = matchNote(response); if (!item.paper.upload) item.paper.upload = response.paper.upload; c.focused = item.key; }
+          } catch (error) {
+            if (generation !== c.generation || error.name === 'AbortError') return;
+            c.errors.push(`${file.name}: ${error.message}`);
+          }
+        }
+      } finally { if (generation === c.generation) { c.states = {}; c.pdfProgress = ''; render(); } }
+    }
     const loading = () => Object.values(c.states).some(value => value === 'loading');
     const eligible = item => !(item.paper.existing && item.paper.existing.admission !== 'approved') && !(item.result && ['similar', 'needs_review'].includes(item.result.status));
     const alreadyFiled = item => item.paper.existing && item.paper.existing.admission === 'approved' && c.projects.length && c.projects.every(id => item.paper.existing.projects.includes(id));
@@ -156,7 +192,7 @@
       try {
         for (let start = 0; start < items.length; start += 50) {
           const batch = items.slice(start, start + 50);
-          const response = await api('/api/capture', { method: 'POST', body: { projects, query: c.mode === 'links' ? 'Pasted paper links' : c.query, papers: batch.map(item => ({ ...item.paper, ...(item.paper.existing ? { use_existing_id: item.paper.existing.id } : {}), ...override })) } });
+          const response = await api('/api/capture', { method: 'POST', body: { projects, query: c.mode === 'links' ? 'Pasted paper links' : c.mode === 'pdf' ? 'Imported PDF' : c.query, papers: batch.map(item => ({ ...item.paper, ...(item.paper.existing ? { use_existing_id: item.paper.existing.id } : {}), ...override })) } });
           response.results.forEach(result => {
             const item = batch[result.index];
             item.result = result;
@@ -166,6 +202,7 @@
               if (result.status === 'added') ++added; else ++filed;
             }
             if (result.status === 'error') c.errors.push(`${item.paper.title}: ${result.error}`);
+            if (result.pdf === 'expired') c.errors.push(`${item.paper.title}: the uploaded PDF expired before it was added. Import it again to keep the file.`);
           });
         }
       } catch (error) { c.errors.push(error.message); }
@@ -175,7 +212,7 @@
       }
     }
     function tabs() {
-      return h('div', { class: 'capture-tabs' }, ...[['search', 'Search papers'], ['links', 'Paste links'], ['manual', 'Manual entry']].map(([mode, title]) => h('button', {
+      return h('div', { class: 'capture-tabs' }, ...[['search', 'Search papers'], ['links', 'Paste links'], ['pdf', 'Import PDF'], ['manual', 'Manual entry']].map(([mode, title]) => h('button', {
         class: 'toolbar-button', type: 'button', 'aria-pressed': String(c.mode === mode), onclick: () => { cancel(); c.mode = mode; c.errors = []; c.items = []; c.selected.clear(); c.focused = null; render(); }
       }, title)));
     }
@@ -183,8 +220,8 @@
       return `javascript:(()=>{const u=new URL(${JSON.stringify(window.location.origin)});u.searchParams.set('screen','add');u.searchParams.set('url',location.href);u.searchParams.set('title',document.title);window.open(u.href,'corpus-capture','width=1100,height=780');})()`;
     }
     function projectsRail() {
-      return h('aside', { class: 'facet-rail capture-projects', ariaLabel: 'Projects to add papers to' },
-        h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, 'ADD TO PROJECTS'),
+      return h('aside', { class: 'facet-rail capture-projects', ariaLabel: 'Topics to add papers to' },
+        h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, 'ADD TO TOPICS'),
           ...fields().map(field => h('label', { class: 'facet-option' }, h('input', { type: 'checkbox', checked: c.projects.includes(field.id), onchange: event => project(field.id, event.target.checked) }), h('span', { class: 'facet-label' }, projectSymbol(field.symbol), field.label))),
           h('p', { class: 'capture-hint' }, 'Your choices stay selected for the next paper.')),
         h('section', { class: 'facet-section' }, h('label', { class: 'facet-title', for: 'capture-search-in' }, 'SEARCH IN'), h('select', { id: 'capture-search-in', class: 'select', value: c.searchIn, onchange: event => { c.searchIn = event.target.value; if (c.query) search(); } },
@@ -225,35 +262,40 @@
         h('input', { type: 'checkbox', checked: c.selected.has(item.key), disabled: !eligible(item) || alreadyFiled(item) || c.busy, ariaLabel: `Select ${item.paper.title}`, onchange: event => { if (event.target.checked) c.selected.add(item.key); else c.selected.delete(item.key); render(); } }),
         h('button', { class: 'capture-result-info', type: 'button', ariaLabel: `Inspect ${item.paper.title}`, onclick: () => { c.focused = item.key; c.expanded = c.expanded === item.key ? null : item.key; render(); } }, h('span', { class: 'capture-result-title' }, item.paper.title),
           h('span', { class: 'capture-result-meta' }, `${(item.paper.authors || []).slice(0, 5).join('; ')}${(item.paper.authors || []).length > 5 ? '; …' : ''}`),
-          h('span', { class: 'capture-result-meta' }, `${item.paper.year || '—'} · ${item.paper.venue || '—'}${item.paper.existing ? ` · ${item.paper.existing.admission === 'approved' ? 'In library' : item.paper.existing.admission === 'dismissed' ? 'Previously dismissed' : 'Awaiting approval'}` : ''}`)),
+          h('span', { class: 'capture-result-meta' }, `${item.paper.year || '—'} · ${item.paper.venue || '—'}${item.paper.existing ? ` · ${item.paper.existing.admission === 'approved' ? 'In library' : item.paper.existing.admission === 'dismissed' ? 'Previously dismissed' : 'Awaiting approval'}` : ''}`),
+          item.note ? h('span', { class: 'capture-result-meta capture-match' }, item.note) : null),
         h('div', { class: 'capture-result-actions' }, resultActions(item)),
         c.expanded === item.key ? h('div', { class: 'capture-mobile-abstract' }, item.paper.abstract || 'No abstract supplied by this source.') : null));
       const query = h('form', { class: 'query-toolbar', onsubmit: event => { event.preventDefault(); search(); } },
         h('div', { class: 'query-wrap' }, h('span', { class: 'query-prompt', ariaHidden: true }, '>'),
           h('input', { id: 'capture-query', class: 'query-input', type: 'search', value: c.query, placeholder: 'Title, author, DOI, or paper link…', ariaLabel: 'Find papers', maxlength: 3000, oninput: event => schedule(event.target.value) })),
-        h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', 'aria-expanded': String(c.projectsOpen), onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `PROJECTS (${c.projects.length})`),
+        h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', 'aria-expanded': String(c.projectsOpen), onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `TOPICS (${c.projects.length})`),
         h('button', { class: 'toolbar-button', type: 'submit' }, 'SEARCH'));
       const links = c.mode === 'links' ? h('section', { class: 'capture-links' }, h('label', { class: 'panel-title', for: 'capture-links' }, 'PAPER LINKS · ONE PER LINE'),
         h('textarea', { id: 'capture-links', class: 'input', rows: 5, value: c.input, placeholder: 'https://arxiv.org/abs/…\nhttps://doi.org/…', oninput: event => { c.input = event.target.value; } }),
         h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', disabled: loading(), onclick: resolveLinks }, loading() ? 'LOOKING UP…' : 'FIND PAPERS'), h('span', { class: 'capture-hint' }, 'Up to 30 links. Review the matches, then add them together.'))) : null;
-      const status = Object.entries(c.states).map(([name, value]) => `${name === 'arxiv' ? 'arXiv' : name === 'crossref' ? 'Crossref' : name === 'library' ? 'Saved' : 'Links'} ${value === 'loading' ? 'searching…' : value === 'unavailable' ? 'unavailable' : 'ready'}`).join(' · ');
-      const toolbar = c.mode === 'search' ? query : h('div', { class: 'query-toolbar' }, h('div', { class: 'query-wrap capture-hint' }, 'Paste links from your paper tabs'), h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `PROJECTS (${c.projects.length})`));
+      const pdf = c.mode === 'pdf' ? h('section', { class: 'capture-links' }, h('label', { class: 'capture-dropzone' },
+          h('input', { id: 'capture-pdf', class: 'visually-hidden', type: 'file', accept: 'application/pdf,.pdf', multiple: true, ariaLabel: 'Choose PDF files', onchange: event => { const files = [...event.target.files]; event.target.value = ''; importPdfs(files); } }),
+          h('span', { class: 'panel-title' }, loading() ? 'READING PDFS…' : 'DROP PDFS HERE OR CLICK TO CHOOSE'),
+          h('span', { class: 'capture-hint' }, c.pdfProgress || 'Each PDF is matched to its arXiv or published record. Unknown papers become new entries. The file is kept as the paper\'s PDF.'))) : null;
+      const status = Object.entries(c.states).map(([name, value]) => `${name === 'arxiv' ? 'arXiv' : name === 'crossref' ? 'Crossref' : name === 'library' ? 'Saved' : name === 'pdf' ? 'PDF' : 'Links'} ${value === 'loading' ? 'searching…' : value === 'unavailable' ? 'unavailable' : 'ready'}`).join(' · ');
+      const toolbar = c.mode === 'search' ? query : h('div', { class: 'query-toolbar' }, h('div', { class: 'query-wrap capture-hint' }, c.mode === 'pdf' ? 'Import papers from PDF files. You can also drop a PDF anywhere in Corpus.' : 'Paste links from your paper tabs'), h('button', { class: 'toolbar-button capture-project-toggle', type: 'button', onclick: () => { c.projectsOpen = !c.projectsOpen; render(); } }, `TOPICS (${c.projects.length})`));
       return h('main', { class: `screen capture-screen${c.projectsOpen ? ' projects-open' : ''}`, onkeydown: event => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); const target = c.items.find(item => item.key === c.focused); add(selected.length ? selected : target && eligible(target) && !alreadyFiled(target) ? [target] : []); }
         if (event.key === 'Escape' && c.projectsOpen) { c.projectsOpen = false; render(); }
       } }, toolbar, tabs(),
-        h('div', { class: 'capture-layout' }, projectsRail(), h('section', { class: 'table-region capture-results' }, links,
+        h('div', { class: 'capture-layout' }, projectsRail(), h('section', { class: 'table-region capture-results' }, links, pdf,
           h('div', { class: 'table-head capture-list-head' }, h('span', null, `${c.items.length} RESULTS`), h('span', { role: 'status' }, status)),
           h('div', { class: 'capture-result-list', 'data-scroll-key': 'capture-results' }, ...rows,
-            !rows.length ? h('div', { class: 'empty' }, loading() ? 'Finding papers…' : c.mode === 'links' ? 'Paste paper links above, then choose Find papers.' : c.query ? 'No matches found. Try fewer title words or an author name.' : 'Search by title or author. Choose projects, then add a paper in one click.') : null,
+            !rows.length ? h('div', { class: 'empty' }, loading() ? 'Finding papers…' : c.mode === 'links' ? 'Paste paper links above, then choose Find papers.' : c.mode === 'pdf' ? 'Choose or drop PDFs above. Review the matches, then add them.' : c.query ? 'No matches found. Try fewer title words or an author name.' : 'Search by title or author. Choose topics, then add a paper in one click.') : null,
             ...c.errors.map(error => h('div', { class: 'notice error-text', role: 'alert' }, error)),
             Object.values(c.states).includes('unavailable') ? h('div', { class: 'capture-retry' }, h('span', { class: 'capture-hint' }, 'One source could not respond. Other results remain available. '), h('button', { class: 'btn', type: 'button', onclick: () => search() }, 'RETRY SEARCH')) : null),
           h('footer', { class: 'capture-actionbar' }, h('div', { class: 'detail-actions' },
             h('button', { class: 'btn btn-primary', type: 'button', title: 'Ctrl/⌘ + Enter', disabled: c.busy || !c.projects.length || !selected.length, onclick: () => add(selected) }, c.busy ? 'ADDING…' : `ADD SELECTED (${selected.length})`),
             h('button', { class: 'btn', type: 'button', disabled: !rows.length || c.busy, onclick: () => { c.items.filter(item => eligible(item) && !alreadyFiled(item)).forEach(item => c.selected.add(item.key)); render(); } }, 'SELECT ALL'),
             c.more && c.mode === 'search' ? h('button', { class: 'btn', type: 'button', disabled: loading(), onclick: () => search(true) }, 'MORE RESULTS') : null),
-            h('div', { class: 'capture-hint' }, c.projects.length ? `Add to: ${c.projects.map(label).join(' · ')}` : 'Choose at least one project.'))), preview()));
+            h('div', { class: 'capture-hint' }, c.projects.length ? `Add to: ${c.projects.map(label).join(' · ')}` : 'Choose at least one topic.'))), preview()));
     }
-    return { state: c, activate, cancel, render: view, tabs, setProjects, projects: () => { initialize(); return c.projects; } };
+    return { state: c, activate, cancel, importPdfs, render: view, tabs, setProjects, projects: () => { initialize(); return c.projects; } };
   };
 })();

@@ -74,7 +74,6 @@ def test_keyboard_view_and_palette(page):
     page.locator('.paper-row.selected').click()
     page.keyboard.press('j')
     expect(page.locator('.paper-row.selected')).to_be_visible()
-    page.keyboard.press('x')
     page.get_by_role('button',name='VIEW: ROWS',exact=True).click()
     expect(page.get_by_role('button',name='VIEW: BARS',exact=True)).to_be_visible()
     page.reload()
@@ -116,12 +115,36 @@ def test_triage_save_and_export(page,site):
     response=page.request.get(site+'/api/papers',params={'q':'Beta state:reviewed rel:8'})
     assert response.json()['total']==1
     page.get_by_role('link',name='Export',exact=True).click()
-    page.get_by_label('whole library',exact=False).check()
+    expect(page.locator('.export-paper')).to_have_count(3)
+    expect(page.locator('.export-output .export-count')).to_contain_text('3 entries')
     page.get_by_role('button',name='JSON',exact=True).click()
+    expect(page.locator('.preview')).not_to_contain_text('Triaged in browser')
+    page.get_by_role('checkbox',name='notes',exact=True).check()
     expect(page.locator('.preview')).to_contain_text('Triaged in browser')
     with page.expect_download() as download:
         page.get_by_role('button',name='DOWNLOAD .json',exact=True).click()
     assert download.value.suggested_filename=='corpus.json'
+
+
+def test_export_remembers_topics_exclusions_and_options(page,site):
+    page.get_by_role('link',name='Export',exact=True).click()
+    expect(page.locator('.export-paper')).to_have_count(3)
+    page.get_by_role('checkbox',name='Include Gamma neural inference',exact=True).uncheck()
+    expect(page.locator('.export-papers .export-count')).to_have_text('2 of 3 included')
+    expect(page.locator('.preview')).not_to_contain_text('Gamma neural inference')
+    rail=page.get_by_role('complementary',name='Export settings')
+    rail.get_by_role('checkbox',name='Diffusion composition').uncheck()
+    expect(page.locator('.export-paper')).to_have_count(2)
+    page.get_by_role('button',name='Minimal',exact=True).click()
+    expect(page.locator('.preview')).to_contain_text('Alpha scientific posterior')
+    expect(page.locator('.preview')).not_to_contain_text('url')
+    page.wait_for_timeout(700)  # settings save after a short pause
+    page.reload()
+    expect(page.locator('.export-paper')).to_have_count(2)
+    expect(page.get_by_role('checkbox',name='Include Gamma neural inference',exact=True)).not_to_be_checked()
+    expect(page.get_by_role('button',name='Minimal',exact=True)).to_have_attribute('aria-pressed','true')
+    expect(page.locator('.export-output .export-count')).to_contain_text('1 entry')
+    assert page.evaluate('document.documentElement.scrollWidth')<=1440
 
 
 def test_identifier_capture_keeps_pdf_and_review_inputs(page,site):
@@ -137,8 +160,8 @@ def test_identifier_capture_keeps_pdf_and_review_inputs(page,site):
     page.get_by_role('link',name='Add',exact=True).click()
     page.get_by_role('button',name='Manual entry',exact=True).click()
     page.locator('#form-identifier').fill('2501.01234')
-    page.get_by_role('group',name='Paper projects').get_by_role('checkbox',name='SBI pretraining',exact=True).uncheck()
-    page.get_by_role('group',name='Paper projects').get_by_role('checkbox',name='Diffusion composition',exact=True).check()
+    page.get_by_role('group',name='Paper topics').get_by_role('checkbox',name='SBI pretraining',exact=True).uncheck()
+    page.get_by_role('group',name='Paper topics').get_by_role('checkbox',name='Diffusion composition',exact=True).check()
     page.locator('#form-state').select_option('reviewed')
     page.locator('#form-starred').check()
     page.locator('#form-notes').fill('Check stability and growth rates')
@@ -153,7 +176,7 @@ def test_identifier_capture_keeps_pdf_and_review_inputs(page,site):
     with page.expect_response('**/api/metadata'):
         page.get_by_role('button',name='FETCH',exact=True).click()
     expect(page.locator('.artifact-editor-row')).to_have_count(2)
-    expect(page.get_by_role('group',name='Paper projects').get_by_role('checkbox',name='Diffusion composition',exact=True)).to_be_checked()
+    expect(page.get_by_role('group',name='Paper topics').get_by_role('checkbox',name='Diffusion composition',exact=True)).to_be_checked()
     expect(page.locator('#form-state')).to_have_value('reviewed')
     expect(page.locator('#form-starred')).to_be_checked()
     expect(page.locator('#form-notes')).to_have_value('Check stability and growth rates')
@@ -194,7 +217,7 @@ def test_topics_can_be_created_edited_and_used_for_papers(page,site):
     page.get_by_role('link',name='Add',exact=True).click()
     page.get_by_role('button',name='Manual entry',exact=True).click()
     page.locator('#form-title').fill('Generalization across physical regimes')
-    projects=page.get_by_role('group',name='Paper projects')
+    projects=page.get_by_role('group',name='Paper topics')
     projects.get_by_role('checkbox',name='Forecast transfer',exact=True).check()
     page.get_by_role('button',name='SAVE',exact=True).click()
     expect(page.locator('.detail-title')).to_have_text('Generalization across physical regimes')
@@ -251,7 +274,7 @@ def test_inbox_filters_pending_edits_and_mobile_layout(page,site):
     ids=add_inbox_candidates(page,site)
     page.get_by_role('link',name='Inbox',exact=True).click()
     expect(page.locator('.inbox-paper-title')).to_have_text('Phase boundaries from short observation contexts')
-    page.get_by_role('combobox',name='Inbox topic',exact=True).select_option('diff-compose')
+    page.get_by_role('radiogroup',name='Inbox topic').get_by_role('radio',name='Diffusion composition').check()
     expect(page.locator('.inbox-item')).to_have_count(1)
     expect(page.locator('.inbox-paper-title')).to_have_text('Composing molecular priors for protein structure')
     page.get_by_role('button',name='EDIT DETAILS',exact=True).click()

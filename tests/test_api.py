@@ -294,8 +294,9 @@ def test_auth_gate_login_logout_and_cross_origin_write(tmp_path):
         assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
         logged_in = client.post("/api/login", json={"password": "correct-horse"})
         assert logged_in.status_code == 200, logged_in.text
-        assert logged_in.json() == {"authenticated": True}
-        assert client.get("/api/session").json() == {"authenticated": True}
+        assert logged_in.json()["authenticated"] is True
+        assert logged_in.json()["user"]["role"] == "admin"
+        assert client.get("/api/session").json()["authenticated"] is True
 
         cross_origin = client.post(
             "/api/papers",
