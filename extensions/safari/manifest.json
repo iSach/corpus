@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Corpus Saver",
+  "version": "0.1.0",
+  "description": "Send the paper on the current page to your Corpus Inbox.",
+  "background": {
+    "scripts": ["src/shim.js", "src/payload.js", "src/background.js"],
+    "persistent": false
+  },
+  "action": {
+    "default_title": "Save to Corpus",
+    "default_popup": "popup/popup.html"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corpus Saver options</title>
+  <style>
+    :root { color-scheme: light dark; font: 15px -apple-system, system-ui, sans-serif; }
+    body { max-width: 460px; margin: 24px auto; padding: 0 16px; }
+    label { display: block; margin: 14px 0 4px; }
+    input { width: 100%; padding: 6px; box-sizing: border-box; font: inherit; }
+    button { margin-top: 16px; padding: 6px 14px; font: inherit; }
+    .hint { font-size: 12px; opacity: .7; }
+  </style>
+</head>
+<body>
+  <h1>Corpus Saver</h1>
+  <form id="form">
+    <label for="baseUrl">Corpus URL</label>
+    <input id="baseUrl" type="url" placeholder="https://corpus.example.com" required>
+    <label for="token">Ingest token</label>
+    <input id="token" type="password" autocomplete="off" required>
+    <p class="hint">The value of CORPUS_INGEST_TOKEN or data/ingest-token. Stored in this browser's extension storage only.</p>
+    <label for="topic">Topic ID (optional)</label>
+    <input id="topic" type="text" placeholder="unfiled">
+    <button type="submit">Save settings</button>
+  </form>
+  <p id="msg" role="status"></p>
+  <script src="../src/shim.js"></script>
+  <script src="../src/payload.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
