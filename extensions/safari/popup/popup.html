@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Save to Corpus</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <p id="status" class="muted">Reading page…</p>
+    <section id="detected" hidden>
+      <h1 id="title"></h1>
+      <p id="authors" class="muted"></p>
+      <p id="doi" class="muted"></p>
+    </section>
+    <button id="save" disabled>Save to Corpus</button>
+    <p id="result" role="status"></p>
+    <a id="options" href="#">Options</a>
+  </main>
+  <script src="../src/shim.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

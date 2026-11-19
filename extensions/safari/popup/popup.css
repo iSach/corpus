@@ -1,0 +1,10 @@
+:root { color-scheme: light dark; font: 14px -apple-system, system-ui, sans-serif; }
+body { margin: 0; width: 340px; }
+main { padding: 12px 14px; }
+h1 { font-size: 15px; margin: 0 0 4px; }
+p { margin: 4px 0; overflow-wrap: anywhere; }
+.muted { opacity: .7; }
+button { width: 100%; padding: 8px; font: inherit; margin-top: 8px; }
+#result.error { color: #c0392b; }
+#result.ok { color: #1e8449; }
+a { font-size: 12px; }
