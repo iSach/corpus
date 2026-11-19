@@ -1314,10 +1314,13 @@
         const checked = (state.facetFilters[key] || []).some(value => String(value) === String(row.value));
         const visibleCount = row.visibleCount == null ? row.count : row.visibleCount;
         const unavailable = visibleCount != null && Number(visibleCount) === 0;
-        return h('label', { class: `facet-option${unavailable ? ' facet-option-empty' : ''}`, title: unavailable ? 'No matching papers' : '' },
+        // A topic count ignores the ticked topics; when they narrow it, show how many of its papers they share.
+        const partial = row.visibleCount != null && Number(row.visibleCount) !== Number(row.count);
+        const title = unavailable ? 'No matching papers' : partial ? `${row.visibleCount} of ${row.count} papers match the current filters` : '';
+        return h('label', { class: `facet-option${unavailable ? ' facet-option-empty' : ''}`, title },
           h('input', { type: 'checkbox', checked, onchange: event => toggleFacet(key, row.value, event.target.checked) }),
           h('span', { class: 'facet-label' }, key === 'field' ? projectName(row.value) : row.value),
-          row.count == null ? null : h('span', { class: 'facet-count' }, row.count)
+          row.count == null ? null : h('span', { class: 'facet-count' }, partial ? `${row.visibleCount} / ${row.count}` : row.count)
         );
       }));
     });

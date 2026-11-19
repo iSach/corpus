@@ -171,6 +171,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .facet-option:hover { color: var(--accent-dark); }
 .facet-option input { flex: none; width: 11px; height: 11px; margin: 0; accent-color: var(--accent); }
 .facet-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-count { flex: none; white-space: nowrap; }
 .slider-row { display: flex; align-items: center; gap: 6px; padding: 0 0 5px; }
 .slider-row label { width: 44px; color: var(--ink-2); }
 .slider-row input { flex: 1; min-width: 0; height: 3px; appearance: none; border: 0; border-radius: 0; background: var(--neutral-300); }
