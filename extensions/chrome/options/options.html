@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Corpus extension options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>Corpus extension</h1>
+    <form id="form">
+      <label>Corpus address
+        <input id="baseUrl" type="url" placeholder="https://corpus.example" required autocomplete="off">
+      </label>
+      <label>Ingest token
+        <input id="token" type="password" required autocomplete="off" spellcheck="false">
+      </label>
+      <p class="hint">The token is the server's <code>ingest-token</code> (see the extension README). It is stored only in this browser profile.</p>
+      <button type="submit">Save settings</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

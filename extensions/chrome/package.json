@@ -1,0 +1,6 @@
+{
+  "name": "corpus-chrome-extension",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/", "package": "scripts/package.sh" }
+}

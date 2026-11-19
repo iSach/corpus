@@ -88,6 +88,34 @@ def test_ingest_token_batch_accepts_duplicates_and_rejects_malformed_items(app_c
     assert any(p["status"] == "duplicate" for p in duplicate["provenance"])
 
 
+def test_ingest_resolves_identifier_only_items_on_the_server(app_client, monkeypatch):
+    client, _ = app_client
+    seen = []
+
+    def fake_fetch(identifier):
+        seen.append(identifier)
+        if "broken" in identifier:
+            raise ValueError("unrecognized link")
+        return {"title": "Resolved paper", "authors": ["Ada Lovelace"], "doi": "10.5555/resolved", "year": 2023}
+
+    monkeypatch.setattr("corpus.app.fetch_metadata", fake_fetch)
+    response = client.post(
+        "/api/ingest",
+        headers={"Authorization": "Bearer test-ingest-token"},
+        json={"agent": "browser-extension", "papers": [
+            {"identifier": "https://publisher.example/article/1", "query": "extension"},
+            {"identifier": "https://publisher.example/broken"},
+        ]},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [item["status"] for item in result["results"]] == ["accept", "reject"]
+    assert "unrecognized link" in result["results"][1]["reason"]
+    paper = client.get("/api/paper", params={"id": result["results"][0]["id"]}).json()
+    assert paper["title"] == "Resolved paper" and paper["doi"] == "10.5555/resolved"
+    assert paper["admission"] == "pending"
+
+
 def test_sql_console_is_read_only_and_times_out_recursive_queries(app_client):
     client, _ = app_client
     selected = client.post("/api/sql", json={"sql": "SELECT 1 AS one"})
