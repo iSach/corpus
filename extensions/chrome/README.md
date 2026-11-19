@@ -48,7 +48,7 @@ The server side is `POST /api/ingest`; an item may carry just `{"identifier": "<
 
 ```sh
 cd extensions/chrome
-node --test tests/        # Node 18+, no dependencies
+node --test "tests/*.test.js"        # Node 18+, no dependencies
 ```
 
 ## Package for the Chrome Web Store
