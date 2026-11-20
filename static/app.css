@@ -260,6 +260,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Approval inbox */
 .inbox-badge { margin-left: 5px; color: var(--accent-dark); font-size: 10px; }
+.inbox-new { margin-left: 4px; padding: 0 4px; border-radius: 7px; background: #c0392b; color: #fff; font-size: 9px; font-weight: 700; line-height: 13px; display: inline-block; vertical-align: 1px; }
 /* Claude page */
 .claude-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 0; font: 600 14px/1.4 var(--mono); color: var(--ink); }
 .claude-state.paused { color: var(--accent-dark); }

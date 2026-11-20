@@ -31,7 +31,7 @@ def test_import_waits_outside_library_exports_stats_and_pdf_queue(library,monkey
     assert client.post('/api/export',json={'scope':'selection','ids':[paper_id]}).json()['count'] == 0
     stats = client.get('/api/stats').json()
     assert stats['total'] == 1 and stats['code'] == 0 and stats['pdf_pending'] == 0
-    assert stats['inbox'] == {'pending':1,'approved':0,'dismissed':0,'later':0}
+    assert stats['inbox'] == {'pending':1,'approved':0,'dismissed':0,'later':0,'new':0}
     assert jobs.next_artifact(settings) is None
     pdf = next(artifact for artifact in paper['artifacts'] if artifact['kind']=='pdf')
     for path in ('cache','retry'):
@@ -110,3 +110,17 @@ def test_ingest_token_cannot_approve_and_session_is_required(tmp_path):
         client.post('/api/login',json={'password':'owner-password'})
         assert client.post('/api/inbox/decision',headers={'Origin':'https://attacker.example'},json={'id':paper_id,'action':'approve'}).status_code == 403
         assert decision(client,paper_id,'approve').status_code == 200
+
+
+def test_new_count_tracks_papers_since_inbox_was_opened(library):
+    client, _ = library
+    ingest(client,proposal('first'))
+    assert client.get('/api/stats').json()['inbox']['new'] == 0
+    assert client.post('/api/inbox/seen').json()['counts']['new'] == 0
+    second = ingest(client,proposal('second',title='A second unseen discovery'))['results'][0]['id']
+    ingest(client,proposal('third',title='A third unseen discovery'))
+    assert client.get('/api/stats').json()['inbox']['new'] == 2
+    assert client.get('/api/inbox').json()['counts']['new'] == 2
+    assert decision(client,second,'dismiss').status_code == 200
+    assert client.get('/api/stats').json()['inbox']['new'] == 1
+    assert client.post('/api/inbox/seen').json()['counts'] == {'pending':2,'approved':0,'dismissed':1,'later':0,'new':0}

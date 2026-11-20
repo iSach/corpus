@@ -106,7 +106,7 @@
     passwordLoginBusy: false,
     loginPassword: '',
     loginEmail: (() => { try { return localStorage.getItem('corpus.loginEmail') || ''; } catch (_) { return ''; } })(),
-    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
+    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'newest', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
     smartLists: [],
     smartListsLoaded: false,
     form: null,
@@ -297,7 +297,7 @@
     else if (route.screen === 'account') { accounts.load(); loadPasskeys(); }
     else if (route.screen === 'admin') accounts.load();
     else if (route.screen === 'claude') claude.load();
-    else if (route.screen === 'inbox') { if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
+    else if (route.screen === 'inbox') { state.inbox.seenMarked = false; if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
     render();
   }
 
@@ -483,6 +483,12 @@
     finally { state.topicSaving = false; render(); }
   }
 
+  function markInboxSeen() {
+    state.inbox.seenMarked = true;
+    state.inbox.counts.new = 0;
+    api('/api/inbox/seen', { method: 'POST' }).catch(() => {});
+  }
+
   async function loadInbox(quiet = false) {
     quiet = quiet === true;
     const inbox = state.inbox;
@@ -495,6 +501,7 @@
       inbox.papers = data.papers;
       inbox.total = data.total;
       inbox.counts = data.counts;
+      if (state.screen === 'inbox' && (inbox.counts.new || !inbox.seenMarked)) markInboxSeen();
       inbox.topics = data.topics || {};
       inbox.error = '';
       if (inbox.focusId) { inbox.selectedId = inbox.focusId; inbox.focusId = null; }
@@ -1282,11 +1289,12 @@
     const screens = ['library', 'inbox', 'stats', 'add', 'export', 'topics', ...(claude.available() ? ['claude'] : [])];
     const nav = h('nav', { class: 'screen-nav', ariaLabel: 'Primary navigation' }, ...screens.map(screen => h('a', {
       href: routeUrl(screen), ariaCurrent: state.screen === screen ? 'page' : null,
-      ariaLabel: screen === 'inbox' ? 'Inbox' : screen === 'claude' ? (alert ? `Claude: ${alert.label}` : 'Claude') : null,
+      ariaLabel: screen === 'inbox' ? (state.inbox.counts.new && state.screen !== 'inbox' ? `Inbox, ${state.inbox.counts.new} new` : 'Inbox') : screen === 'claude' ? (alert ? `Claude: ${alert.label}` : 'Claude') : null,
       title: screen === 'claude' && alert ? alert.label : null,
       onclick: event => { event.preventDefault(); navigate(screen); }
     }, screen[0].toUpperCase() + screen.slice(1),
       screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null,
+      screen === 'inbox' && state.screen !== 'inbox' && state.inbox.counts.new ? h('span', { class: 'inbox-new', title: `${state.inbox.counts.new} new since you last opened the Inbox` }, `+${state.inbox.counts.new}`) : null,
       screen === 'claude' && alert ? h('span', { class: 'inbox-badge claude-badge', ariaHidden: true }, alert.mark) : null)));
     const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'ADMIN') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
