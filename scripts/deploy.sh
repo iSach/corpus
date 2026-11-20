@@ -95,6 +95,8 @@ tar -xzf "$snapshot" -C "$work/data"
 # data paths at the copy instead of passing them with -E.
 grep -Ev '^[[:space:]]*(export[[:space:]]+)?CORPUS_(DATA_DIR|PDF_CACHE)=' /etc/corpus/corpus.env >"$work/env" || true
 printf 'CORPUS_DATA_DIR=%s\nCORPUS_PDF_CACHE=%s\n' "$work/data" "$work/data/pdfs" >>"$work/env"
+# Workers only need to start and stop; never let one call Claude from the copy.
+printf 'CORPUS_AI_REVIEWS=0\n' >>"$work/env"
 chown -R corpus:corpus "$work"
 chmod 0600 "$work/env"
 log "rehearsing startup of ${target:0:7} on the snapshot"
