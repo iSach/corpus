@@ -106,7 +106,7 @@
     passwordLoginBusy: false,
     loginPassword: '',
     loginEmail: (() => { try { return localStorage.getItem('corpus.loginEmail') || ''; } catch (_) { return ''; } })(),
-    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false, claude: null },
+    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
     smartLists: [],
     smartListsLoaded: false,
     form: null,
@@ -143,7 +143,8 @@
     openPaper: id => navigate('library', id), openInbox: id => navigate('inbox', id)
   });
 
-  const accounts = window.CorpusAccounts({ h, api, render, toast, session: () => state.session });
+  const accounts = window.CorpusAccounts({ h, api, render, toast, session: () => state.session, navigate: (...args) => navigate(...args) });
+  const claude = window.CorpusClaude({ h, api, render, toast, session: () => state.session, config: () => state.config });
 
   function h(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -254,11 +255,11 @@
     let screen = url.searchParams.get('screen') || '';
     if (!screen) {
       const segment = path.split('/').filter(Boolean)[0];
-      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(segment) ? segment : 'library';
+      screen = ['stats', 'add', 'export', 'library', 'topics', 'passkeys', 'inbox', 'admin', 'account', 'claude'].includes(segment) ? segment : 'library';
     }
     if (screen === 'paper') screen = 'library';
     if (screen === 'passkeys') screen = 'account';
-    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox', 'admin', 'account'].includes(screen)) screen = 'library';
+    if (!['library', 'stats', 'add', 'export', 'topics', 'passkeys', 'inbox', 'admin', 'account', 'claude'].includes(screen)) screen = 'library';
     return { screen, paperId: url.searchParams.get('paper') || url.searchParams.get('id') || null,
       captureUrl: screen === 'add' ? url.searchParams.get('url') : null,
       captureTitle: screen === 'add' ? url.searchParams.get('title') : null };
@@ -295,6 +296,7 @@
     else if (route.screen === 'topics') loadTopics();
     else if (route.screen === 'account') { accounts.load(); loadPasskeys(); }
     else if (route.screen === 'admin') accounts.load();
+    else if (route.screen === 'claude') claude.load();
     else if (route.screen === 'inbox') { if (route.paperId) { state.inbox.focusId = route.paperId; state.inbox.field = ''; state.inbox.q = ''; state.inbox.offset = 0; } loadInbox(); }
     render();
   }
@@ -495,7 +497,6 @@
       inbox.counts = data.counts;
       inbox.topics = data.topics || {};
       inbox.error = '';
-      if (state.config.ai_review && state.config.ai_review.enabled) api('/api/ai').then(status => { inbox.claude = status; render(); }).catch(() => {});
       if (inbox.focusId) { inbox.selectedId = inbox.focusId; inbox.focusId = null; }
       else if (!inbox.papers.some(paper => paper.id === inbox.selectedId)) inbox.selectedId = inbox.papers.length ? inbox.papers[0].id : null;
       const selected = inbox.papers.find(paper => paper.id === inbox.selectedId);
@@ -586,11 +587,6 @@
     } catch (error) { toast(getError(error), true); }
     finally { inbox.busy = false; render(); }
   }
-  async function updateClaudeQueue(body) {
-    try { state.inbox.claude = await api('/api/ai', { method: 'POST', body }); }
-    catch (error) { toast(getError(error), true); }
-    render();
-  }
 
 
   async function prepareFullText() {
@@ -661,6 +657,7 @@
     if (document.visibilityState !== 'visible' || !state.session || !state.session.authenticated || state.inbox.busy) return;
     if (state.screen === 'inbox') loadInbox(true);
     if (state.screen === 'inbox' || state.screen === 'library') loadStats(true);
+    if (claude.available()) claude.refresh(state.screen === 'claude');
   }
 
   function passkeysAvailable() {
@@ -1281,11 +1278,16 @@
     const refs = state.libraryTotal || state.total || 0;
     const unreviewed = states.unreviewed == null ? null : states.unreviewed;
     const summary = unreviewed == null ? `${refs.toLocaleString()} REFS` : `${refs.toLocaleString()} REFS · ${unreviewed} unreviewed`;
-    const nav = h('nav', { class: 'screen-nav', ariaLabel: 'Primary navigation' }, ...['library', 'inbox', 'stats', 'add', 'export', 'topics'].map(screen => h('a', {
+    const alert = claude.attention();
+    const screens = ['library', 'inbox', 'stats', 'add', 'export', 'topics', ...(claude.available() ? ['claude'] : [])];
+    const nav = h('nav', { class: 'screen-nav', ariaLabel: 'Primary navigation' }, ...screens.map(screen => h('a', {
       href: routeUrl(screen), ariaCurrent: state.screen === screen ? 'page' : null,
-      ariaLabel: screen === 'inbox' ? 'Inbox' : null,
+      ariaLabel: screen === 'inbox' ? 'Inbox' : screen === 'claude' ? (alert ? `Claude: ${alert.label}` : 'Claude') : null,
+      title: screen === 'claude' && alert ? alert.label : null,
       onclick: event => { event.preventDefault(); navigate(screen); }
-    }, screen[0].toUpperCase() + screen.slice(1), screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null)));
+    }, screen[0].toUpperCase() + screen.slice(1),
+      screen === 'inbox' && state.inbox.counts.pending ? h('span', { class: 'inbox-badge', ariaHidden: true }, state.inbox.counts.pending) : null,
+      screen === 'claude' && alert ? h('span', { class: 'inbox-badge claude-badge', ariaHidden: true }, alert.mark) : null)));
     const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'ADMIN') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
       h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
@@ -1609,24 +1611,6 @@
       renderAssessmentForm(paper));
   }
 
-  function renderClaudeQueue() {
-    const status = state.inbox.claude;
-    if (!state.config.ai_review || !state.config.ai_review.enabled || !status || !status.enabled) return null;
-    const pacing = status.pacing || {}, queue = status.queue;
-    const waiting = queue.inbox + queue.update + queue.library;
-    const time = value => new Date(value * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const minutes = seconds => seconds < 90 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
-    const state_ = pacing.paused_until ? `paused until ${time(pacing.paused_until)} · ${pacing.reason}`
-      : !waiting ? 'all caught up'
-      : pacing.daily_limit && pacing.calls_today >= pacing.daily_limit ? 'daily limit reached; continues tomorrow'
-      : pacing.next_call_in ? `next review in ${minutes(pacing.next_call_in)}` : 'reviewing';
-    return h('div', { class: 'claude-queue', role: 'status' },
-      h('span', null, `CLAUDE · ${status.backend === 'cli' ? 'subscription' : 'API'} · ${state_}`),
-      h('span', { class: 'soft' }, `${waiting} waiting (${queue.inbox} inbox · ${queue.update} updates · ${queue.library} library) · ${pacing.calls_today}${pacing.daily_limit ? '/' + pacing.daily_limit : ''} today · ${status.month.reviews} this month${status.month.cost_usd ? ` (≈ $${status.month.cost_usd.toFixed(2)} at API prices)` : ''}${status.failed ? ` · ${status.failed} failed` : ''}`),
-      h('label', { class: 'claude-backfill' }, h('input', { type: 'checkbox', checked: status.backfill, onchange: event => updateClaudeQueue({ backfill: event.target.checked }) }), 'review library papers too'),
-      pacing.paused_until ? h('button', { class: 'btn', type: 'button', onclick: () => updateClaudeQueue({ resume: true }) }, 'RESUME NOW') : null);
-  }
-
   function renderInbox() {
     const inbox = state.inbox;
     const paper = inbox.detail;
@@ -1705,7 +1689,6 @@
     return h('main', { class: `inbox-screen${inbox.filtersOpen ? ' filters-open' : ''}${inbox.mobileList || !inbox.selectedId ? ' mobile-list' : ''}` },
       query, tabs,
       inbox.error ? h('div', { class: 'notice error-text', role: 'alert' }, inbox.error) : null,
-      renderClaudeQueue(),
       inbox.lastDecision ? h('div', { class: 'inbox-undo', role: 'status' }, `Last decision: ${inbox.lastDecision.after}. `, h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: undoInboxDecision }, 'UNDO LAST DECISION')) : null,
       h('div', { class: 'inbox-layout' }, filters,
         h('aside', { class: 'inbox-queue table-region', ariaLabel: 'Discovery queue' }, h('div', { class: 'table-head inbox-list-head' }, h('span', null, 'PAPERS'), h('span', null, `${inbox.total} ${inbox.status}`)),
@@ -2062,6 +2045,7 @@
     if (state.screen === 'topics') return renderTopics();
     if (state.screen === 'passkeys') return renderPasskeys();
     if (state.screen === 'inbox') return renderInbox();
+    if (state.screen === 'claude') return claude.renderPage();
     return renderLibrary();
   }
   function render() {
@@ -2167,6 +2151,7 @@
       // The header's ingest summary is useful on every screen, including the
       // initial library route, so fetch its shared source immediately.
       loadStats();
+      if (claude.available() && route.screen !== 'claude') claude.refresh();
       activateRoute(route);
     } catch (error) {
       state.booting = false;

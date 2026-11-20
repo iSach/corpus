@@ -87,7 +87,8 @@ def test_admin_sets_claude_keys_and_switches_people(account_site, browser, tmp_p
         admin.goto(account_site)
         admin.locator('#password').fill(PASSWORD)
         admin.get_by_role('button',name='ENTER',exact=True).click()
-        admin.get_by_role('button',name='ADMIN',exact=True).click()
+        # Claude's keys and settings live on the Claude page, which the administrator always sees.
+        admin.get_by_role('link',name='Claude',exact=True).click()
         expect(admin.get_by_text('Claude reviews are off for your library',exact=False)).to_be_visible()
         token = admin.get_by_label('CLAUDE SUBSCRIPTION TOKEN',exact=True)
         assert token.get_attribute('type') == 'password'
@@ -97,9 +98,14 @@ def test_admin_sets_claude_keys_and_switches_people(account_site, browser, tmp_p
         expect(token).to_have_value('')
         assert 'sk-ant-oat01' not in admin.content()
         admin.get_by_label('REVIEWS PER DAY (0: NO LIMIT)',exact=True).fill('5')
+        admin.get_by_label('EFFORT',exact=True).select_option('medium')
         admin.get_by_role('button',name='SAVE CLAUDE SETTINGS',exact=True).click()
         expect(admin.get_by_role('button',name='USE SERVER DEFAULTS',exact=True)).to_be_visible()
-        assert admin.request.get(account_site+'/api/admin/services').json()['settings']['ai_daily_limit']['value'] == 5
+        saved = admin.request.get(account_site+'/api/admin/services').json()['settings']
+        assert saved['ai_daily_limit']['value'] == 5 and saved['ai_effort']['value'] == 'medium'
+        expect(admin.locator('.claude-facts')).to_contain_text('medium effort')
+        admin.get_by_role('button',name='ADMIN',exact=True).click()
+        expect(admin.get_by_role('link',name='Claude page',exact=True)).to_be_visible()
         expect(admin.get_by_role('button',name='CLAUDE: ON',exact=True)).to_be_visible()
         admin.get_by_role('button',name='CLAUDE: ON',exact=True).click()
         expect(admin.get_by_role('button',name='CLAUDE: OFF',exact=True)).to_be_visible()

@@ -260,6 +260,19 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Approval inbox */
 .inbox-badge { margin-left: 5px; color: var(--accent-dark); font-size: 10px; }
+/* Claude page */
+.claude-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 0; font: 600 14px/1.4 var(--mono); color: var(--ink); }
+.claude-state.paused { color: var(--accent-dark); }
+.claude-state .btn { font-weight: 400; }
+.claude-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; margin: 0 0 10px; font: 11px/1.5 var(--mono); }
+.claude-facts dt { color: var(--muted); }
+.claude-facts dd { margin: 0; overflow-wrap: anywhere; }
+.claude-layout .claude-backfill { display: flex; align-items: baseline; gap: 6px; cursor: pointer; }
+.claude-layout .claude-backfill input { flex: none; accent-color: var(--accent); }
+.claude-table { width: 100%; border-collapse: collapse; font: 11px/1.45 var(--mono); }
+.claude-table th { color: var(--muted); font-weight: 400; text-align: left; border-bottom: 1px solid var(--line); padding: 3px 8px 3px 0; }
+.claude-table td { padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.claude-table td.claude-paper { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .inbox-screen { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .inbox-tabs { display: flex; flex: none; min-height: 25px; border-bottom: 1px solid var(--ink); background: var(--bg); }
 .inbox-tab { border-left: 0; border-right: 1px solid var(--line); font-size: 10px; letter-spacing: .03em; }
@@ -316,8 +329,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .claude-more { margin: 6px 0; }
 .claude-more summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
 .claude-more blockquote { margin: 6px 0; padding-left: 8px; border-left: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
-.claude-queue { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 2px 12px; padding: 4px 10px; border-bottom: 1px solid var(--line); font: 10px/1.5 var(--mono); }
-.claude-backfill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .review-evidence details { margin: 6px 0; }
 .review-evidence summary, .inbox-provenance summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
 .review-comparison > p, .review-history-entry { margin: 5px 0; padding: 5px 0; font-size: 12px; line-height: 1.5; }

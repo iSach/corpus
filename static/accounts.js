@@ -1,5 +1,5 @@
 /* Invitations and account management. Tokens stay out of server URL logs. */
-window.CorpusAccounts = function ({ h, api, render, toast, session }) {
+window.CorpusAccounts = function ({ h, api, render, toast, session, navigate }) {
   const params = new URLSearchParams(window.location.hash.slice(1));
   const token = params.get('invite');
   if (token) window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -7,7 +7,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     loading: false, error: '', users: [], invitations: [], emailEnabled: false, origin: '', email: '', link: null,
     currentPassword: '', newPassword: '', accountEmail: '', resendKey: '', mailPending: false,
     ingest: { loaded: false, exists: false, created: null, secret: '', error: '' },
-    services: null, secrets: {}, options: {}, servicesError: '' };
+    services: null, secrets: {}, servicesError: '' };
   const errorText = error => error.message || String(error);
   const date = value => new Date(value * 1000).toLocaleString();
   function notice(value) { return value ? h('p', { class: 'notice error-text', role: 'alert' }, value) : null; }
@@ -58,11 +58,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     } catch (error) { state.error = errorText(error); }
     finally { state.loading = false; render(); }
   }
-  function showServices(data) {
-    state.services = data;
-    const value = key => data.settings[key].value;
-    state.options = { ai_backend: value('ai_backend'), ai_model: value('ai_model'), ai_min_interval: String(Math.round(value('ai_min_interval') / 60 * 10) / 10), ai_daily_limit: String(value('ai_daily_limit')) };
-  }
+  function showServices(data) { state.services = data; }
   async function saveServices(changes, done) {
     if (state.busy) return;
     state.busy = true; state.servicesError = ''; render();
@@ -72,12 +68,6 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
       toast(done);
     } catch (error) { state.servicesError = errorText(error); }
     finally { state.busy = false; render(); }
-  }
-  function saveOptions(event) {
-    event.preventDefault();
-    const minutes = Number(state.options.ai_min_interval), limit = Number(state.options.ai_daily_limit);
-    if (!Number.isFinite(minutes) || !Number.isInteger(limit)) { state.servicesError = 'Enter numbers for the pacing settings.'; render(); return; }
-    saveServices({ ai_backend: state.options.ai_backend, ai_model: state.options.ai_model.trim(), ai_min_interval: Math.round(minutes * 60), ai_daily_limit: limit }, 'Claude settings saved');
   }
   async function toggleClaude(user) {
     if (state.busy) return;
@@ -103,7 +93,6 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     if (!data) return null;
     const settings = data.settings;
     const source = item => item.source === 'admin' ? 'Saved on this page' : item.source === 'environment' ? 'Set in the server environment' : 'Not set';
-    const backend = { cli: 'your Claude subscription (claude -p)', api: 'the Anthropic API key' };
     const secret = (key, label, hint) => h('form', { class: 'service-key', onsubmit: event => { event.preventDefault(); if (state.secrets[key]) saveServices({ [key]: state.secrets[key] }, label + ' saved'); } },
       h('div', { class: 'service-key-head' }, h('label', { for: `service-${key}` }, label), h('span', { class: 'soft' }, source(settings[key]))),
       h('div', { class: 'service-key-input' },
@@ -111,23 +100,9 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
         h('button', { class: 'btn', type: 'submit', disabled: state.busy }, 'SAVE'),
         settings[key].source === 'admin' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => saveServices({ [key]: null }, label + ' removed') }, 'REMOVE') : null),
       hint ? h('p', { class: 'soft' }, hint) : null);
-    const option = (key, label, input) => h('div', { class: 'service-option' }, h('label', { for: `service-${key}` }, label), input);
     return [
       h('h2', null, 'Claude reviews'),
-      h('p', null, data.owner_backend ? `Your library is reviewed with ${backend[data.owner_backend]}.` : !data.owner_switch ? 'Claude reviews are off for your library: turn CLAUDE on next to your name under People.' : settings.ai_backend.value === 'off' ? 'Claude reviews are off: choose what to use below.' : 'Claude reviews are off for your library: add a subscription token or an API key.',
-        ' ', data.member_backend ? 'Other people’s libraries can use the API key once you turn Claude on for them below.' : 'Other people’s libraries need an API key; your subscription only reviews your own library.'),
-      secret('claude_oauth_token', 'CLAUDE SUBSCRIPTION TOKEN', `Run claude setup-token on a computer where you’re signed in to Claude, then paste the token. Corpus runs ${data.claude_bin}.`),
-      secret('anthropic_api_key', 'ANTHROPIC API KEY', 'Used instead of the subscription when both are set, unless you prefer the subscription below.'),
-      h('form', { class: 'passkey-form', onsubmit: saveOptions },
-        h('div', { class: 'service-options' },
-        option('ai_backend', 'USE', h('select', { id: 'service-ai_backend', class: 'input', onchange: event => { state.options.ai_backend = event.target.value; } },
-          ...[['auto', 'API key if set, otherwise subscription'], ['cli', 'Subscription only'], ['api', 'API key only'], ['off', 'Nothing: Claude reviews off']].map(([value, label]) => h('option', { value, selected: state.options.ai_backend === value }, label)))),
-        option('ai_model', 'MODEL', h('input', { id: 'service-ai_model', class: 'input', value: state.options.ai_model, required: true, oninput: event => { state.options.ai_model = event.target.value; } })),
-        option('ai_min_interval', 'MINUTES BETWEEN REVIEWS', h('input', { id: 'service-ai_min_interval', class: 'input', type: 'number', min: 0, max: 1440, step: 0.5, value: state.options.ai_min_interval, required: true, oninput: event => { state.options.ai_min_interval = event.target.value; } })),
-        option('ai_daily_limit', 'REVIEWS PER DAY (0: NO LIMIT)', h('input', { id: 'service-ai_daily_limit', class: 'input', type: 'number', min: 0, max: 10000, step: 1, value: state.options.ai_daily_limit, required: true, oninput: event => { state.options.ai_daily_limit = event.target.value; } }))),
-        h('div', { class: 'account-actions' },
-          h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.busy }, 'SAVE CLAUDE SETTINGS'),
-          ['ai_backend', 'ai_model', 'ai_min_interval', 'ai_daily_limit'].some(key => settings[key].source === 'admin') ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => saveServices({ ai_backend: null, ai_model: null, ai_min_interval: null, ai_daily_limit: null }, 'Server defaults restored') }, 'USE SERVER DEFAULTS') : null)),
+      h('p', null, 'Claude’s keys, model, effort and pacing are on the ', h('a', { href: '/?screen=claude', onclick: event => { event.preventDefault(); navigate('claude'); } }, 'Claude page'), '. Turn reviews on or off for each person under People.'),
       h('h2', null, 'Paper metadata keys'),
       secret('s2_api_key', 'SEMANTIC SCHOLAR API KEY', 'Finds published venues for ICLR, ICML and AISTATS preprints.'),
       secret('openalex_api_key', 'OPENALEX API KEY', 'Optional; OpenAlex also works without a key.'),
