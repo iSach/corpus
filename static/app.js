@@ -6,6 +6,8 @@
   const root = document.getElementById('app');
   const toastRegion = document.getElementById('toast-region');
   const SCORE_KEYS = ['rel', 'cred', 'qual', 'reimpl'];
+  // Columns whose first click sorts high-to-low (best scores, newest, starred, most artifacts first).
+  const SORT_DESC_FIRST = new Set([...SCORE_KEYS, 'year', 'added', 'flag', 'art']);
   const SCORE_LABELS = { rel: 'relevance', cred: 'credibility', qual: 'quality', reimpl: 'reimpl' };
   const FACET_KEYS = ['field', 'state', 'has', 'venue_class', 'year'];
   const EXPORT_PRESETS = {
@@ -76,6 +78,9 @@
     offset: 0,
     limit: 100,
     sort: 'rel',
+    sortDesc: true,
+    // A clicked column header ('+name' / '-name'); it overrides a sort: directive in the query.
+    sortChoice: (() => { try { return localStorage.getItem('corpus.sort') || ''; } catch (_) { return ''; } })(),
     resultFacets: {},
     facetTotals: {},
     facetUniverse: {},
@@ -312,7 +317,7 @@
   async function loadPapers() {
     if (!state.session && state.config.auth_required) return;
     const requestId = ++papersRequest;
-    const params = new URLSearchParams({ q: state.q, facets: JSON.stringify(buildFacetPayload()), limit: String(state.limit), offset: String(state.offset) });
+    const params = new URLSearchParams({ q: state.q, facets: JSON.stringify(buildFacetPayload()), limit: String(state.limit), offset: String(state.offset), sort: state.sortChoice });
     state.loadingPapers = true;
     render();
     try {
@@ -332,6 +337,7 @@
       state.libraryTotal = Number(data.library_total == null ? state.libraryTotal : data.library_total);
       state.elapsed = data.elapsed_ms == null ? null : data.elapsed_ms;
       state.sort = data.sort || state.sort;
+      state.sortDesc = data.sort_desc == null ? state.sortDesc : Boolean(data.sort_desc);
       state.resultFacets = data.facets || {};
       state.facetTotals = { ...state.resultFacets };
       activeKeys.forEach((key, index) => { state.facetTotals[key] = ownData[index].facets?.[key] || []; });
@@ -1032,6 +1038,8 @@
 
   function onQuery(value) {
     state.q = value;
+    // Typing a sort: directive takes over from a clicked column header.
+    if (/(^|[\s(])sort:\S/.test(value)) setSortChoice('');
     state.offset = 0;
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(loadPapers, 170);
@@ -1298,11 +1306,6 @@
   function artifactKinds(paper) { return Array.isArray(paper && paper.artifacts) ? paper.artifacts : []; }
 
   function renderHeader() {
-    const stats = state.stats || {};
-    const states = stats.states || {};
-    const refs = state.libraryTotal || state.total || 0;
-    const unreviewed = states.unreviewed == null ? null : states.unreviewed;
-    const summary = unreviewed == null ? `${refs.toLocaleString()} REFS` : `${refs.toLocaleString()} REFS · ${unreviewed} unreviewed`;
     const alert = claude.attention();
     const screens = ['library', 'inbox', 'stats', 'add', 'export', 'topics', ...(claude.available() ? ['claude'] : [])];
     const nav = h('nav', { class: 'screen-nav', ariaLabel: 'Primary navigation' }, ...screens.map(screen => h('a', {
@@ -1316,7 +1319,7 @@
       screen === 'claude' && alert ? h('span', { class: 'inbox-badge claude-badge', ariaHidden: true }, alert.mark) : null)));
     const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'ADMIN') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
-      h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
+      h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus')),
       nav,
       actions
     );
@@ -1397,11 +1400,28 @@
     if (!withBars) return h('span', { class: `score-value ${scoreClass(n)}` }, scoreLabel(n));
     return h('span', { class: `score-value ${scoreClass(n)}` }, h('span', { class: 'score-bar', ariaHidden: 'true' }, h('i', { class: n != null && n <= 5 ? 'low' : '', style: { width: n == null ? '0%' : `${n * 10}%` } })), scoreLabel(n));
   }
+  function setSortChoice(value) {
+    state.sortChoice = value;
+    try { if (value) localStorage.setItem('corpus.sort', value); else localStorage.removeItem('corpus.sort'); } catch (_) {}
+  }
+  function sortByColumn(name) {
+    const active = String(state.sort || '').replace(/^[+-]/, '') === name;
+    const descending = active ? !state.sortDesc : SORT_DESC_FIRST.has(name);
+    setSortChoice(`${descending ? '-' : '+'}${name}`);
+    state.offset = 0;
+    loadPapers();
+  }
   function renderTable() {
     const withBars = state.view === 1;
     const ledger = state.view === 2;
-    const headCell = (label, className = '') => h('div', { class: `table-cell ${className}` }, label);
-    const head = h('div', { class: 'table-head' }, headCell('', 'gutter'), headCell('TITLE / AUTHORS', 'title'), headCell('VENUE', 'venue'), headCell('YR', 'year'), ...SCORE_KEYS.map(key => headCell(key.toUpperCase(), 'score')), headCell('ART', 'artifacts'), headCell('ADDED', 'added'));
+    const activeSort = String(state.sort || '').replace(/^[+-]/, '');
+    const headCell = (label, className, sortName, title) => {
+      const active = activeSort === sortName;
+      const arrow = active ? (state.sortDesc ? '▼' : '▲') : '';
+      return h('div', { class: `table-cell ${className} sortable${active ? ' sorted' : ''}`, role: 'columnheader', 'aria-sort': active ? (state.sortDesc ? 'descending' : 'ascending') : 'none' },
+        h('button', { class: 'sort-button', type: 'button', 'data-focus-key': `sort-${sortName}`, title: `Sort by ${title}`, onclick: () => sortByColumn(sortName) }, h('span', { class: 'sort-label' }, label), h('span', { class: 'sort-arrow', ariaHidden: 'true' }, arrow)));
+    };
+    const head = h('div', { class: 'table-head', role: 'row' }, headCell('★', 'gutter', 'flag', 'starred, then unreviewed'), headCell('TITLE / AUTHORS', 'title', 'title', 'title'), headCell('VENUE', 'venue', 'venue', 'venue'), headCell('YR', 'year', 'year', 'year'), ...SCORE_KEYS.map(key => headCell(key.toUpperCase(), 'score', key, key)), headCell('ART', 'artifacts', 'art', 'artifacts (PDF, then source code)'), headCell('ADDED', 'added', 'added', 'date added'));
     const body = state.papers.length ? state.papers.map((paper, index) => {
       const artifacts = artifactKinds(paper);
       const hasCode = artifacts.some(a => String(a.kind).toLowerCase() === 'code');
@@ -1423,7 +1443,7 @@
       h('span', null, `${state.total ? state.offset + 1 : 0}–${Math.min(state.offset + state.limit, state.total)} / ${state.total}`),
       h('button', { class: 'icon-button', type: 'button', ariaLabel: 'Next page', disabled: state.offset + state.limit >= state.total, onclick: () => { state.offset += state.limit; loadPapers(); } }, '›')
     );
-    return h('main', { class: `table-region ${withBars ? 'bars-view' : ''} ${ledger ? 'ledger-view' : ''}` }, h('div', { class: 'table-scroll', 'data-scroll-key': 'table-scroll' }, h('div', { class: 'paper-table', role: 'table', ariaLabel: 'Paper library' }, head, ...body)), h('div', { class: 'table-footer' }, h('span', null, `sort: ${state.sort || 'rel'} ↓`), h('span', null, '○ unreviewed · ★ starred · j/k move · ⏎ open · ⇧⏎ PDF · ⌘k palette'), page, h('span', { class: 'push' }, VIEW_NOTES[state.view])));
+    return h('main', { class: `table-region ${withBars ? 'bars-view' : ''} ${ledger ? 'ledger-view' : ''}` }, h('div', { class: 'table-scroll', 'data-scroll-key': 'table-scroll' }, h('div', { class: 'paper-table', role: 'table', ariaLabel: 'Paper library' }, head, ...body)), h('div', { class: 'table-footer' }, h('span', null, `sort: ${String(state.sort || 'added').replace(/^[+-]/, '')} ${state.sortDesc ? '↓' : '↑'}`), h('span', null, '○ unreviewed · ★ starred · j/k move · ⏎ open · ⇧⏎ PDF · ⌘k palette'), page, h('span', { class: 'push' }, VIEW_NOTES[state.view])));
   }
 
   function sanitizeHighlightedHTML(value) {
@@ -1994,7 +2014,7 @@
   }
 
   function syntaxHelp() {
-    return 'term · topic:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred · is:venue-proposed\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:-added';
+    return 'term · topic:value · tag:value · venue:value · author:value · year:2025\nrel:>7 · cred:>=5 · qual:6 · reimpl:10 · year:<2020\npdf:"posterior collapse" · state:unreviewed · has:code · has:pdf · is:starred · is:venue-proposed\nA AND B · A OR B · NOT A · (A OR B) · implicit AND\nsort:rel · sort:+rel · sort:-added';
   }
 
   function renderPasskeys() {

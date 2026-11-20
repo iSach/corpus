@@ -249,8 +249,8 @@ def get_paper(db, paper_id, q=''):
             p['pdf_hits'].append({'page':int(r['page']),'snippet':snippet})
     return p
 
-def search(db,q='',facets=None,limit=100,offset=0):
-    start=time.perf_counter(); c=compile_query(q,facets)
+def search(db,q='',facets=None,limit=100,offset=0,sort=None):
+    start=time.perf_counter(); c=compile_query(q,facets,sort)
     where="p.admission='approved' AND ("+c.where+')'
     # Evaluate the potentially broad FTS predicate once for all facet counts.
     count_sql = 'WITH matched AS MATERIALIZED (SELECT p.id,p.field,p.state,p.venue_class,p.year FROM papers p WHERE '+where+') '
@@ -277,7 +277,7 @@ def search(db,q='',facets=None,limit=100,offset=0):
             by_id[row['paper_id']]['projects'].append(row['field_id'])
         for a in db.execute('SELECT * FROM artifacts WHERE paper_id IN ('+','.join('?' for _ in papers)+')',list(by_id)):
             by_id[a['paper_id']]['artifacts'].append(dict(a))
-    return {'papers':papers,'total':total,'library_total':library_total,'facets':counts,'sort':c.sort,'elapsed_ms':round((time.perf_counter()-start)*1000,2)}
+    return {'papers':papers,'total':total,'library_total':library_total,'facets':counts,'sort':c.sort,'sort_desc':c.descending,'elapsed_ms':round((time.perf_counter()-start)*1000,2)}
 
 
 def readonly_sql(settings,sql,timeout=0.15,max_rows=1000):
