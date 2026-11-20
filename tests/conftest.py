@@ -9,6 +9,14 @@ from corpus.db import add_run, connection, initialize, validate_paper, write_pap
 from helpers import INBOX_FIELDS, INBOX_TOKEN, TOPIC_FIELDS, assessment, open_page, pdf_bytes, serve
 
 
+@pytest.fixture(autouse=True)
+def no_real_claude(monkeypatch):
+    """Settings read credentials from the environment; never let a test reach Claude."""
+    for name in ('ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CORPUS_AI_BACKEND'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('CORPUS_CLAUDE_BIN', '/nonexistent/claude')
+
+
 @pytest.fixture
 def app_client(tmp_path):
     """Dev-mode library with the three legacy topics; yields (client, settings)."""

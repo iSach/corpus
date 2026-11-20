@@ -105,7 +105,7 @@
     passwordLoginBusy: false,
     loginPassword: '',
     loginEmail: (() => { try { return localStorage.getItem('corpus.loginEmail') || ''; } catch (_) { return ''; } })(),
-    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false },
+    inbox: { papers: [], total: 0, counts: { pending: 0, approved: 0, dismissed: 0, later: 0 }, selectedId: null, detail: null, status: 'pending', field: '', q: '', sort: 'relevance', evidence: '', origin: '', offset: 0, limit: 50, loading: false, detailLoading: false, busy: false, error: '', lastDecision: null, editor: null, textPage: null, filtersOpen: false, mobileList: false, claude: null },
     smartLists: [],
     smartListsLoaded: false,
     form: null,
@@ -489,6 +489,7 @@
       inbox.counts = data.counts;
       inbox.topics = data.topics || {};
       inbox.error = '';
+      if (state.config.ai_review && state.config.ai_review.enabled) api('/api/ai').then(status => { inbox.claude = status; render(); }).catch(() => {});
       if (inbox.focusId) { inbox.selectedId = inbox.focusId; inbox.focusId = null; }
       else if (!inbox.papers.some(paper => paper.id === inbox.selectedId)) inbox.selectedId = inbox.papers.length ? inbox.papers[0].id : null;
       const selected = inbox.papers.find(paper => paper.id === inbox.selectedId);
@@ -567,17 +568,24 @@
     loadInboxPaper(next.id);
   }
 
-  async function requestAiReview() {
+  async function requestAiReview(paper) {
     const inbox = state.inbox;
-    if (inbox.busy || !inbox.detail) return;
+    if (inbox.busy || !paper) return;
     inbox.busy = true; inbox.error = ''; render();
     try {
-      await api('/api/review/ai', { method: 'POST', body: { id: inbox.detail.id } });
-      await loadInboxPaper(inbox.detail.id);
-      toast('AI review queued');
-    } catch (error) { inbox.error = getError(error); }
+      await api('/api/review/ai', { method: 'POST', body: { id: paper.id } });
+      if (inbox.detail && inbox.detail.id === paper.id) await loadInboxPaper(paper.id);
+      if (state.selectedDetail && state.selectedDetail.id === paper.id) await loadPaper(paper.id);
+      toast('Claude review queued');
+    } catch (error) { toast(getError(error), true); }
     finally { inbox.busy = false; render(); }
   }
+  async function updateClaudeQueue(body) {
+    try { state.inbox.claude = await api('/api/ai', { method: 'POST', body }); }
+    catch (error) { toast(getError(error), true); }
+    render();
+  }
+
 
   async function prepareFullText() {
     const inbox = state.inbox;
@@ -1461,6 +1469,7 @@
     return h('aside', { class: 'detail-pane', 'data-scroll-key': 'detail-pane' },
       h('div', { class: 'detail-header' }, h('div', { class: 'detail-id' }, h('span', null, fmt(paper.arxiv_id || paper.doi || paper.openreview_id || paper.id)), h('span', null, (paper.projects || [paper.field]).map(id => projectName(id)))), h('div', { class: 'detail-title' }, fmt(paper.title)), h('div', { class: 'detail-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} ${fmt(paper.year, '')}`), h('div', { class: 'detail-actions' }, h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('add', paper.id) }, 'EDIT'), h('button', { class: 'btn', type: 'button', onclick: () => updateStarred(paper) }, paper.starred ? 'UNSTAR' : 'STAR'), h('button', { class: 'btn', type: 'button', onclick: () => openPdf(paper) }, 'PDF'), h('button', { class: 'btn', type: 'button', onclick: () => deletePaper(paper) }, 'REMOVE'))),
       renderPublication(paper),
+      renderClaude(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ARTIFACTS'), h('div', { class: 'artifact-list' }, paperLinks, artifactLinks)),
@@ -1506,6 +1515,52 @@
       h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit', disabled: inbox.busy || (full && !page) }, 'SAVE ASSESSMENT'), h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: () => { inbox.editor = null; inbox.textPage = null; render(); } }, 'CANCEL')));
   }
 
+  function assessorLabel(assessor) {
+    if (assessor === 'owner') return 'You';
+    if (assessor === 'automatic-topic-match-v1') return 'Keyword match (retired)';
+    if (assessor.startsWith('ai:')) return 'Claude · ' + assessor.split(':')[1];
+    return 'Agent · ' + assessor;
+  }
+
+  function claudeStatus(job) {
+    if (!job) return '';
+    const label = { queued: 'waiting in the Claude queue', running: 'Claude is reading this paper…', complete: 'review ready', superseded: 'paper or topics changed; queued again', failed: job.attempts >= 3 ? 'review failed; retry available' : 'review failed; retrying later' }[job.status] || job.status;
+    return label + (job.error && job.status !== 'complete' ? ` · ${job.error}` : '');
+  }
+
+  function renderClaude(paper) {
+    const review = paper.review || {}, claude = review.claude, job = review.ai;
+    const configured = state.config.ai_review && state.config.ai_review.enabled;
+    if (!claude && !configured) return null;
+    const refresh = configured && paper.admission !== 'dismissed' && (!job || !['queued', 'running'].includes(job.status) || job.attempts >= 3)
+      ? h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: () => requestAiReview(paper) }, claude ? 'REVIEW AGAIN' : 'REVIEW NOW') : null;
+    if (!claude) return h('section', { class: 'detail-section claude-review' }, h('div', { class: 'panel-title' }, 'CLAUDE REVIEW'),
+      h('p', { class: 'review-hint', role: 'status' }, job ? claudeStatus(job) : paper.admission === 'approved' ? 'Not reviewed yet. Library papers are reviewed once you turn on library reviews in the Inbox.' : 'Not reviewed yet.'), refresh);
+    const result = claude.result, digest = result.digest;
+    const roles = { model: 'model to investigate', evaluation: 'evaluation evidence', supporting: 'supporting work', adjacent: 'adjacent' };
+    const full = claude.evidence === 'full_text';
+    return h('section', { class: 'detail-section claude-review' },
+      h('div', { class: 'panel-title' }, 'CLAUDE REVIEW'),
+      h('p', { class: 'review-hint' }, `${claude.model} · ${full ? 'full text' : 'abstract only'} · ${digest.kind} · ${formatDate(claude.created)}`),
+      claude.stale ? h('p', { class: 'review-hint', role: 'status' }, `The paper or its topics changed since this review${job && job.status !== 'complete' ? ` · ${claudeStatus(job)}` : ''}.`) : null,
+      h('p', { class: 'claude-tldr' }, digest.tldr),
+      digest.contributions.length ? h('ul', { class: 'claude-contributions' }, ...digest.contributions.map(item => h('li', null, item))) : null,
+      h('div', { class: 'claude-topics' }, ...result.topics.map(topic => h('div', { class: 'claude-topic' },
+        h('div', { class: 'claude-topic-head' }, h('span', { class: 'claude-topic-name' }, topic.label || projectName(topic.topic)),
+          h('span', { class: `claude-topic-score${topic.priority === 'high' ? ' review-high' : ''}` }, `${topic.relevance}/10 · ${topic.priority} · ${roles[topic.role] || topic.role} · ${topic.confidence} confidence`)),
+        h('p', null, topic.explanation),
+        topic.questions.length ? h('ul', { class: 'claude-questions' }, ...topic.questions.map(question => h('li', null, question))) : null))),
+      result.suggested_topics.length ? h('p', { class: 'claude-suggestions' }, h('strong', null, 'Also fits: '), ...result.suggested_topics.flatMap((item, index) => [index ? ' · ' : '', `${item.label} (${item.relevance}/10): ${item.reason}`])) : null,
+      h('details', { class: 'claude-more', 'data-disclosure-key': `claude:${paper.id}:${claude.id}` }, h('summary', null, 'Method, results & limits'),
+        h('p', null, h('strong', null, 'Method. '), digest.method),
+        h('p', null, h('strong', null, 'Results. '), digest.results),
+        h('p', null, h('strong', null, 'Limitations. '), digest.limitations),
+        h('p', null, h('strong', null, 'Scores. '), full ? SCORE_KEYS.filter(key => key !== 'rel').map(key => `${SCORE_LABELS[key]}: ${result.scores[key] == null ? 'unknown' : result.scores[key] + '/10'} (${result.score_reasons[key]})`).join(' · ') : 'Credibility, quality and reimplementation are scored once Claude has read the full text.'),
+        ...result.evidence.map(item => h('blockquote', null, item.quote, ` (p. ${item.page})`)),
+        h('p', { class: 'review-hint' }, result.limitation)),
+      refresh);
+  }
+
   function renderReviewEvidence(paper) {
     const review = paper.review || {}, assessment = review.current, abstract = review.abstract, check = review.check;
     const assessed = assessment && assessment.assessor !== 'not-assessed';
@@ -1518,7 +1573,7 @@
       fact('relevance', assessed ? `${cap(assessment.priority)} · ${roles[assessment.role]}` : 'Awaiting assessment', { class: assessed && assessment.priority === 'high' ? 'review-high' : '' }),
       fact('evidence', full ? 'Full text checked' : assessed ? 'Abstract only' : 'No assessment yet', { class: 'evidence-level' }),
       assessed ? fact('confidence', cap(assessment.confidence), { title: 'Confidence in the relevance assessment, not model quality' }) : null,
-      assessed ? fact('reviewed by', assessment.assessor === 'owner' ? 'You' : assessment.assessor === 'automatic-topic-match-v1' ? 'Automatic keyword match' : 'Automatic · ' + assessment.assessor) : null,
+      assessed ? fact('reviewed by', assessorLabel(assessment.assessor)) : null,
       fact('version', assessment && assessment.source_version ? assessment.source_version : 'Unspecified'),
       check && !full ? fact('full text', checkLabel[check.status]) : null);
     const comparison = full && abstract ? h('details', { class: 'review-comparison', 'data-disclosure-key': `comparison:${paper.id}:${assessment.id}` },
@@ -1529,8 +1584,6 @@
     const history = (review.history || []).filter(entry => entry.assessor !== 'not-assessed' && (!assessment || (entry.id !== assessment.id && (!abstract || entry.id !== abstract.id))));
     const decision = paper.last_decision;
     return h('section', { class: 'detail-section review-evidence' }, h('div', { class: 'panel-title' }, 'RELEVANCE'), facts,
-      review.ai ? h('p', { class: 'review-hint', role: 'status' }, `AI review · ${review.ai.model} · ${{ queued: 'queued', running: 'reviewing abstract…', complete: 'draft ready', failed: review.ai.attempts >= 3 ? 'failed; retry available' : 'failed; retry scheduled', superseded: 'paper or review changed' }[review.ai.status] || review.ai.status}${review.ai.error ? ' · ' + review.ai.error : ''}`) : state.config.ai_review && state.config.ai_review.enabled ? h('p', { class: 'review-hint' }, 'AI reviews run automatically for pending papers with an abstract and topic criteria.') : h('p', { class: 'review-hint' }, 'AI reviews are not configured. Keyword matches are preliminary; no LLM has reviewed them.'),
-      paper.admission === 'pending' && state.config.ai_review && state.config.ai_review.enabled && (!assessed || assessment.assessor === 'automatic-topic-match-v1') && (!review.ai || ['failed','superseded'].includes(review.ai.status)) ? h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: requestAiReview }, 'REQUEST AI REVIEW') : null,
       h('p', { class: 'review-explanation' }, assessed ? assessment.explanation : 'No relevance explanation supplied yet.'),
       assessment && assessment.limitation && assessed ? h('p', { class: 'review-limitation' }, h('strong', null, 'Limit: '), assessment.limitation) : null,
       assessment && assessment.questions.length ? h('div', { class: 'review-questions' }, h('strong', null, 'Questions before deciding'), h('ul', null, ...assessment.questions.map(question => h('li', null, question)))) : null,
@@ -1546,6 +1599,24 @@
         h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: () => startAssessment('abstract') }, 'ASSESS ABSTRACT'),
         check && ['ready','checked'].includes(check.status) ? h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy, onclick: () => startAssessment('full_text') }, 'RECORD FULL-TEXT CHECK') : h('button', { class: 'btn', type: 'button', disabled: state.inbox.busy || (check && ['queued','preparing'].includes(check.status)), onclick: prepareFullText }, check && check.status === 'unavailable' ? 'RETRY FULL TEXT' : 'CHECK FULL TEXT')) : null,
       renderAssessmentForm(paper));
+  }
+
+  function renderClaudeQueue() {
+    const status = state.inbox.claude;
+    if (!state.config.ai_review || !state.config.ai_review.enabled || !status || !status.enabled) return null;
+    const pacing = status.pacing || {}, queue = status.queue;
+    const waiting = queue.inbox + queue.update + queue.library;
+    const time = value => new Date(value * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const minutes = seconds => seconds < 90 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
+    const state_ = pacing.paused_until ? `paused until ${time(pacing.paused_until)} · ${pacing.reason}`
+      : !waiting ? 'all caught up'
+      : pacing.daily_limit && pacing.calls_today >= pacing.daily_limit ? 'daily limit reached; continues tomorrow'
+      : pacing.next_call_in ? `next review in ${minutes(pacing.next_call_in)}` : 'reviewing';
+    return h('div', { class: 'claude-queue', role: 'status' },
+      h('span', null, `CLAUDE · ${status.backend === 'cli' ? 'subscription' : 'API'} · ${state_}`),
+      h('span', { class: 'soft' }, `${waiting} waiting (${queue.inbox} inbox · ${queue.update} updates · ${queue.library} library) · ${pacing.calls_today}${pacing.daily_limit ? '/' + pacing.daily_limit : ''} today · ${status.month.reviews} this month${status.month.cost_usd ? ` (≈ $${status.month.cost_usd.toFixed(2)} at API prices)` : ''}${status.failed ? ` · ${status.failed} failed` : ''}`),
+      h('label', { class: 'claude-backfill' }, h('input', { type: 'checkbox', checked: status.backfill, onchange: event => updateClaudeQueue({ backfill: event.target.checked }) }), 'review library papers too'),
+      pacing.paused_until ? h('button', { class: 'btn', type: 'button', onclick: () => updateClaudeQueue({ resume: true }) }, 'RESUME NOW') : null);
   }
 
   function renderInbox() {
@@ -1611,10 +1682,11 @@
           h('div', { class: 'artifact-list' }, paper.canonical_url ? h('a', { class: 'artifact-link', href: paper.canonical_url, target: '_blank', rel: 'noopener' }, 'SOURCE ↗') : null, ...links,
             h('button', { class: 'artifact-link', type: 'button', disabled: inbox.busy, onclick: () => navigate('add', paper.id) }, 'EDIT DETAILS'))),
         h('div', { class: 'inbox-reading', 'data-scroll-key': 'inbox-detail' },
+          renderClaude(paper),
           renderReviewEvidence(paper),
           h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('p', { class: 'detail-abstract inbox-abstract' }, paper.abstract || 'No abstract available.')),
-          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, (paper.proposed_reason || '').startsWith('AI draft · ') ? 'AI DRAFT SCORES' : 'IMPORTER SUGGESTION'),
-            h('div', { class: 'review-hint' }, (paper.proposed_reason || '').startsWith('AI draft · ') ? `Abstract only · ${SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${paper['proposed_' + key] == null ? 'unknown' : scoreLabel(paper['proposed_' + key]) + '/10'}`).join(' · ')}` : `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
+          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, (paper.proposed_reason || '').startsWith('Claude draft · ') ? 'CLAUDE DRAFT SCORES' : 'IMPORTER SUGGESTION'),
+            h('div', { class: 'review-hint' }, (paper.proposed_reason || '').startsWith('Claude draft · ') ? `${paper.proposed_reason.includes(' · full text.') ? 'Full text' : 'Abstract only'} · ${SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${paper['proposed_' + key] == null ? 'unknown' : scoreLabel(paper['proposed_' + key]) + '/10'}`).join(' · ')}` : `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
             paper.proposed_reason ? h('p', { class: 'inbox-reason' }, paper.proposed_reason) : null) : null,
           paper.notes ? h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'MY NOTE'), h('div', { class: 'detail-note' }, paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes)) : null,
           h('section', { class: 'detail-section' }, h('details', { class: 'inbox-provenance', 'data-disclosure-key': `discovery:${paper.id}` }, h('summary', null, 'Discovery history'),
@@ -1625,6 +1697,7 @@
     return h('main', { class: `inbox-screen${inbox.filtersOpen ? ' filters-open' : ''}${inbox.mobileList || !inbox.selectedId ? ' mobile-list' : ''}` },
       query, tabs,
       inbox.error ? h('div', { class: 'notice error-text', role: 'alert' }, inbox.error) : null,
+      renderClaudeQueue(),
       inbox.lastDecision ? h('div', { class: 'inbox-undo', role: 'status' }, `Last decision: ${inbox.lastDecision.after}. `, h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: undoInboxDecision }, 'UNDO LAST DECISION')) : null,
       h('div', { class: 'inbox-layout' }, filters,
         h('aside', { class: 'inbox-queue table-region', ariaLabel: 'Discovery queue' }, h('div', { class: 'table-head inbox-list-head' }, h('span', null, 'PAPERS'), h('span', null, `${inbox.total} ${inbox.status}`)),
@@ -1719,7 +1792,7 @@
     const proposed = state.form ? state.form.proposed : {};
     const values = SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${scoreLabel(proposed[key])}`).join(' · ');
     const candidates = state.duplicateCandidates || [];
-    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'AUTOMATIC / IMPORTER DRAFT'), h('p', { class: 'draft-values draft-reason' }, state.form && state.form.review && state.form.review.ai ? `AI review: ${state.form.review.ai.status} · ${state.form.review.ai.model}${state.form.review.ai.error ? ' · ' + state.form.review.ai.error : ''}` : state.config.ai_review && state.config.ai_review.enabled ? 'AI reviews run automatically for pending inbox papers with an abstract and topic criteria.' : 'LLM reviews are not configured.'), state.form && state.form.review && state.form.review.current ? h('p', { class: 'draft-values draft-reason' }, `${state.form.review.current.assessor === 'owner' ? 'Your review' : state.form.review.current.assessor === 'not-assessed' ? 'Awaiting review' : 'Automatic review · ' + state.form.review.current.assessor}: ${state.form.review.current.explanation}`) : null, h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'ACCEPT DRAFT SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
+    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'CLAUDE / IMPORTER DRAFT'), h('p', { class: 'draft-values draft-reason' }, state.form && state.form.review && state.form.review.ai ? `Claude: ${claudeStatus(state.form.review.ai)} · ${state.form.review.ai.model}` : state.config.ai_review && state.config.ai_review.enabled ? 'Claude reviews Inbox papers automatically.' : 'Claude reviews are not configured.'), state.form && state.form.review && state.form.review.current ? h('p', { class: 'draft-values draft-reason' }, `${state.form.review.current.assessor === 'not-assessed' ? 'Awaiting review' : assessorLabel(state.form.review.current.assessor)}: ${state.form.review.current.explanation}`) : null, h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'ACCEPT DRAFT SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
   }
 
   function renderExport() {
@@ -2076,7 +2149,7 @@
     state.routePaperId = route.paperId;
     try {
       const [config, session] = await Promise.all([api('/api/config?email=' + encodeURIComponent(state.loginEmail)), api('/api/session')]);
-      state.config = { fields: Array.isArray(config && config.fields) ? config.fields : [], auth_required: Boolean(config && config.auth_required), passkeys: config.passkeys || { enabled: false, registered: false } };
+      state.config = { fields: Array.isArray(config && config.fields) ? config.fields : [], auth_required: Boolean(config && config.auth_required), passkeys: config.passkeys || { enabled: false, registered: false }, ai_review: config && config.ai_review || null };
       state.session = session || { authenticated: !state.config.auth_required };
       if (accounts.hasInvitation()) { await accounts.inspect(); state.booting = false; render(); return; }
       state.booting = false;

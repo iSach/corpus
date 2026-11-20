@@ -1,0 +1,4 @@
+# /etc/sudoers.d/corpus-deploy (mode 0440): lets the deploy key's forced command
+# start the deploy and read its log, nothing else.
+sach ALL=(root) NOPASSWD: /usr/bin/systemctl start corpus-deploy.service
+sach ALL=(root) NOPASSWD: /usr/bin/journalctl -u corpus-deploy.service *

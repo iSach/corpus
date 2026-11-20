@@ -3,3 +3,4 @@ uvicorn==0.52.4
 pypdf==6.18.0
 markdown-it-py==4.2.0
 webauthn==3.0.1
+anthropic==2.11.0

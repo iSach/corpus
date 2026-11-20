@@ -410,3 +410,68 @@ def test_resend_setup_rejects_sending_only_key_without_storing_it(site,monkeypat
     response = admin.post('/api/admin/mail/resend',json={'api_key':'re_sending_only_key_12345'})
     assert response.status_code == 400 and 'Full access' in response.json()['detail']
     assert not (settings.data_dir/'mail-setup'/'resend-key').exists()
+
+
+def test_revoking_the_last_link_forgets_an_unused_invitation(site):
+    app, admin, settings = site
+    first = invitation(admin, 'gone@example.org')
+    assert admin.post(f"/api/admin/invitations/{first['id']}/revoke").json() == {'revoked': True, 'removed': True}
+    listing = admin.get('/api/admin/accounts').json()
+    assert 'gone@example.org' not in [user['email'] for user in listing['users']] and not listing['invitations']
+    # People who set up an account are never removed, and can be invited again by email.
+    member, user = join(app, invitation(admin, 'kept@example.org'))
+    reset = invitation(admin, 'kept@example.org')
+    assert admin.post(f"/api/admin/invitations/{reset['id']}/revoke").json()['removed'] is False
+    assert admin.post(f"/api/admin/accounts/{user['id']}/remove").status_code == 400
+    # An expired invitation can be removed by hand.
+    stale = invitation(admin, 'stale@example.org')
+    with app.state.accounts.registry() as db:
+        db.execute('UPDATE invitations SET expires=0 WHERE id=?', (stale['id'],))
+        stale_user = db.execute("SELECT id FROM users WHERE email='stale@example.org'").fetchone()['id']
+    assert admin.post(f'/api/admin/accounts/{stale_user}/remove').json() == {'removed': True}
+    assert [u['email'] for u in admin.get('/api/admin/accounts').json()['users']] == [None, 'kept@example.org']
+    assert member.post(f'/api/admin/accounts/{stale_user}/remove').status_code == 403
+
+
+def test_service_keys_are_write_only_and_override_the_environment(site, monkeypatch):
+    app, admin, settings = site
+    status = admin.get('/api/admin/services').json()
+    assert status['settings']['claude_oauth_token'] == {'set': False, 'source': None}
+    assert status['settings']['ai_daily_limit'] == {'value': 30, 'source': 'environment', 'default': 30}
+    assert status['owner_backend'] is None
+    secret = 'sk-ant-oat01-admin-page-token'
+    response = admin.put('/api/admin/services', json={'claude_oauth_token': secret, 'ai_daily_limit': 5, 's2_api_key': 's2-key-12345'})
+    assert response.status_code == 200 and secret not in response.text
+    assert response.json()['settings']['claude_oauth_token'] == {'set': True, 'source': 'admin'}
+    assert response.json()['owner_backend'] == 'cli'
+    assert settings.claude_oauth_token == secret and settings.ai_daily_limit == 5 and settings.s2_api_key == 's2-key-12345'
+    path = settings.data_dir / 'service-config.json'
+    assert path.stat().st_mode & 0o777 == 0o600
+    for bad in ({'ai_model': 'gpt-5'}, {'claude_bin': '/tmp/x'}, {'ai_daily_limit': -1}, {'anthropic_api_key': 'has space inside'}):
+        assert admin.put('/api/admin/services', json=bad).status_code == 400
+    assert admin.put('/api/admin/services', json={'claude_oauth_token': None}).json()['settings']['claude_oauth_token']['set'] is False
+    assert settings.claude_oauth_token == '' and settings.ai_daily_limit == 5
+    member, _ = join(app, invitation(admin))
+    assert member.get('/api/admin/services').status_code == 403
+    assert member.put('/api/admin/services', json={'ai_daily_limit': 100}).status_code == 403
+
+
+def test_claude_is_switched_per_account(site):
+    from corpus import ai_review
+    app, admin, settings = site
+    admin.put('/api/admin/services', json={'claude_oauth_token': 'sk-ant-oat01-token', 'anthropic_api_key': 'sk-ant-api-key'})
+    member, user = join(app, invitation(admin))
+    library = app.state.accounts.library(user['id'])
+    accounts = {u['id']: u['ai'] for u in admin.get('/api/admin/accounts').json()['users']}
+    assert accounts == {'owner': True, user['id']: False}
+    assert ai_review.backend(settings) == 'api' and ai_review.backend(library) is None
+    assert member.get('/api/config').json()['ai_review']['enabled'] is False
+    assert admin.post(f"/api/admin/accounts/{user['id']}/ai", json={'enabled': True}).json() == {'ai': True}
+    assert ai_review.backend(library) == 'api'
+    assert member.get('/api/config').json()['ai_review']['enabled'] is True
+    # Without an API key, a member never falls back to the owner's subscription.
+    admin.put('/api/admin/services', json={'anthropic_api_key': None})
+    assert ai_review.backend(library) is None and ai_review.backend(settings) == 'cli'
+    assert admin.post('/api/admin/accounts/owner/ai', json={'enabled': False}).status_code == 200
+    assert ai_review.backend(settings) is None
+    assert member.post('/api/admin/accounts/owner/ai', json={'enabled': True}).status_code == 403
