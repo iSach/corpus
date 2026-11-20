@@ -1,5 +1,7 @@
 """Browser regressions against an isolated real server and SQLite database."""
 
+import re
+
 from playwright.sync_api import expect
 
 
@@ -112,3 +114,14 @@ def test_topic_icon_takes_a_shape_and_a_color_separately(page):
     # A click on the row's description opens the editor too.
     page.locator('.topic-row',has_text='Diffusion composition').locator('.topic-description').click()
     expect(page.get_by_role('form',name='Edit topic')).to_contain_text('Diffusion composition')
+
+
+def test_score_cells_are_tinted_by_score_except_in_bars_view(page):
+    scored = page.locator('.paper-row', has_text='Alpha scientific posterior').locator('.table-cell.score').first
+    expect(scored).to_have_attribute('style', re.compile(r'background: color-mix\('))
+    unscored = page.locator('.paper-row', has_text='Beta local diffusion').locator('.table-cell.score').first
+    assert unscored.get_attribute('style') is None
+    page.evaluate("localStorage.setItem('corpus.view', '1')")
+    page.reload()
+    expect(page.locator('.table-region.bars-view')).to_be_visible()
+    assert page.locator('.paper-row', has_text='Alpha scientific posterior').locator('.table-cell.score').first.get_attribute('style') is None
