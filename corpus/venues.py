@@ -9,7 +9,7 @@ comes months after the preprint.
 """
 from __future__ import annotations
 
-import asyncio, json, logging, re, time, urllib.parse
+import asyncio, email.utils, json, logging, re, threading, time, urllib.parse
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -165,9 +165,72 @@ def from_openalex(fetch, arxiv_id, title, api_key=''):
     return found, dois
 
 
-def from_semantic_scholar(fetch, arxiv_id, title, api_key=''):
+class Pacer:
+    """Spaces calls to one service across every thread in the process.
+
+    Callers queue on a lock and each waits its turn, so the background workers of
+    every account and the CHECK NOW button share one budget. A 429 pushes the
+    next slot back for everyone, not just the caller that hit it."""
+
+    MAX_BACKOFF = 60.0
+
+    def __init__(self, clock=time.monotonic, sleep=time.sleep):
+        self.clock, self.sleep = clock, sleep
+        self.lock = threading.Lock()
+        self.next_slot = 0.0
+        self.backoff = 0.0
+
+    def call(self, interval, request, retries=2):
+        for attempt in range(retries + 1):
+            with self.lock:
+                delay = self.next_slot - self.clock()
+                if delay > 0:
+                    self.sleep(delay)
+                self.next_slot = self.clock() + interval
+            try:
+                result = request()
+            except sources.SourceError as e:
+                if not _rate_limited(e):
+                    raise
+                with self.lock:
+                    self.backoff = min(self.MAX_BACKOFF, max(_retry_after(e) or 0, self.backoff * 2 or 5.0))
+                    self.next_slot = max(self.next_slot, self.clock() + self.backoff)
+                log.warning('Semantic Scholar rate limit; pausing lookups for %.0f s', self.backoff)
+                if attempt == retries:
+                    raise
+                continue
+            with self.lock:
+                self.backoff = 0.0
+            return result
+
+
+def _rate_limited(error):
+    return getattr(error, 'status', None) == 429 or 'HTTP 429' in str(error)
+
+
+def _retry_after(error):
+    value = (getattr(error, 'retry_after', None) or '').strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        return max(0.0, email.utils.parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError):
+        return None
+
+
+# One per process: Semantic Scholar's limit is per key (or per IP without one).
+S2 = Pacer()
+
+
+def s2_interval(settings):
+    return settings.s2_interval or (1.1 if settings.s2_api_key else 3.0)
+
+
+def from_semantic_scholar(fetch, arxiv_id, title, api_key='', interval=0.0):
     url = 'https://api.semanticscholar.org/graph/v1/paper/arXiv:' + urllib.parse.quote(arxiv_id, safe='/') + '?fields=title,venue,year,publicationVenue,externalIds'
-    paper = _json(fetch, url, {'x-api-key': api_key} if api_key else {})
+    paper = S2.call(interval, lambda: _json(fetch, url, {'x-api-key': api_key} if api_key else {}))
     if not paper:
         return [], []
     same_title = _titles_match(paper.get('title'), title)
@@ -196,9 +259,11 @@ def gather(paper, settings, fetch: Fetch | None = None):
     """Every published-version candidate the sources offer, plus any source errors."""
     arxiv_id, title = paper['arxiv_id'], paper['title']
     candidates, dois, errors = [], [], []
-    for name, lookup, key in (('OpenAlex', from_openalex, settings.openalex_api_key), ('Semantic Scholar', from_semantic_scholar, settings.s2_api_key)):
+    lookups = (('OpenAlex', lambda: from_openalex(fetch, arxiv_id, title, settings.openalex_api_key)),
+               ('Semantic Scholar', lambda: from_semantic_scholar(fetch, arxiv_id, title, settings.s2_api_key, s2_interval(settings))))
+    for name, lookup in lookups:
         try:
-            found, more = lookup(fetch, arxiv_id, title, key) or ([], [])
+            found, more = lookup() or ([], [])
             candidates += found; dois += more
         except Exception as e:  # one source failing must not hide the others
             errors.append(f'{name}: {str(e)[:200]}')
