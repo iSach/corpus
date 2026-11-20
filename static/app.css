@@ -631,6 +631,7 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   .inbox-item { padding: 10px 12px; }
   .inbox-item-title { font-size: 15px; }
   .inbox-item-meta { font-size: 10.5px; }
+  .inbox-list-head .inbox-item-scores { font-size: 8px; letter-spacing: 0; }
   .inbox-pagination .btn { min-width: 44px; min-height: 36px; font-size: 14px; }
   /* Reading a paper: the app header, search and tabs give way to the paper,
      which scrolls as one page above a thumb-sized decision bar. */
