@@ -13,7 +13,15 @@ def counts(db):
     result = {'pending':0, 'approved':0, 'dismissed':0, 'later':0}
     for row in db.execute("SELECT CASE WHEN admission='pending' AND datetime(deferred_until)>datetime('now') THEN 'later' ELSE admission END view,count(*) FROM papers WHERE admission!='approved' OR EXISTS (SELECT 1 FROM inbox_decisions d WHERE d.paper_id=papers.id) GROUP BY view"):
         result[row[0]] = row[1]
+    seen = db.execute("SELECT value FROM preferences WHERE key='inbox_seen'").fetchone()
+    # Papers that reached the Inbox since it was last opened. None before the first visit.
+    result['new'] = db.execute("SELECT count(*) FROM papers WHERE admission='pending' AND (deferred_until IS NULL OR datetime(deferred_until)<=datetime('now')) AND added>?", (seen[0],)).fetchone()[0] if seen else 0
     return result
+
+
+def mark_seen(db):
+    db.execute("INSERT INTO preferences(key,value) VALUES('inbox_seen',strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    return counts(db)
 
 
 def listing(db, query='', field='', status='pending', sort='relevance', limit=50, offset=0, evidence='', origin=''):
@@ -148,6 +156,11 @@ def install_routes(app, settings):
     def inbox(q:str='', field:str='', status:str='pending', sort:str='relevance', limit:int=50, offset:int=0, evidence:str='', origin:str=''):
         with connection(settings,True) as db:
             return listing(db,q,field,status,sort,limit,offset,evidence,origin)
+
+    @app.post('/api/inbox/seen')
+    def seen():
+        with connection(settings) as db:
+            return {'counts':mark_seen(db)}
 
     @app.post('/api/inbox/decision')
     def decision(body:dict):

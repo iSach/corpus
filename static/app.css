@@ -260,6 +260,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Approval inbox */
 .inbox-badge { margin-left: 5px; color: var(--accent-dark); font-size: 10px; }
+.inbox-new { margin-left: 4px; padding: 0 4px; border-radius: 7px; background: #c0392b; color: #fff; font-size: 9px; font-weight: 700; line-height: 13px; display: inline-block; vertical-align: 1px; }
 .inbox-screen { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .inbox-tabs { display: flex; flex: none; min-height: 25px; border-bottom: 1px solid var(--ink); background: var(--bg); }
 .inbox-tab { border-left: 0; border-right: 1px solid var(--line); font-size: 10px; letter-spacing: .03em; }
