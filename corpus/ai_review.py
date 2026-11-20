@@ -120,7 +120,7 @@ class ReviewError(ValueError):
 # Backend selection
 
 def backend(settings):
-    if not settings.ai_reviews or settings.ai_backend == 'off':
+    if not settings.ai_reviews or not settings.ai_allowed or settings.ai_backend == 'off':
         return None
     if settings.ai_backend in ('auto', 'api') and settings.anthropic_api_key:
         return 'api'

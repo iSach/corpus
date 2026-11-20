@@ -6,7 +6,8 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
   const state = { token, invitation: null, inviteError: '', password: '', confirm: '', busy: false,
     loading: false, error: '', users: [], invitations: [], emailEnabled: false, origin: '', email: '', link: null,
     currentPassword: '', newPassword: '', accountEmail: '', resendKey: '', mailPending: false,
-    ingest: { loaded: false, exists: false, created: null, secret: '', error: '' } };
+    ingest: { loaded: false, exists: false, created: null, secret: '', error: '' },
+    services: null, secrets: {}, options: {}, servicesError: '' };
   const errorText = error => error.message || String(error);
   const date = value => new Date(value * 1000).toLocaleString();
   function notice(value) { return value ? h('p', { class: 'notice error-text', role: 'alert' }, value) : null; }
@@ -53,8 +54,84 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
       const data = await api('/api/admin/accounts');
       state.users = data.users; state.invitations = data.invitations;
       state.emailEnabled = data.email_enabled; state.origin = data.public_origin; state.mailPending = data.mail_setup_pending;
+      showServices(await api('/api/admin/services'));
     } catch (error) { state.error = errorText(error); }
     finally { state.loading = false; render(); }
+  }
+  function showServices(data) {
+    state.services = data;
+    const value = key => data.settings[key].value;
+    state.options = { ai_backend: value('ai_backend'), ai_model: value('ai_model'), ai_min_interval: String(Math.round(value('ai_min_interval') / 60 * 10) / 10), ai_daily_limit: String(value('ai_daily_limit')) };
+  }
+  async function saveServices(changes, done) {
+    if (state.busy) return;
+    state.busy = true; state.servicesError = ''; render();
+    try {
+      showServices(await api('/api/admin/services', { method: 'PUT', body: changes }));
+      state.secrets = {};
+      toast(done);
+    } catch (error) { state.servicesError = errorText(error); }
+    finally { state.busy = false; render(); }
+  }
+  function saveOptions(event) {
+    event.preventDefault();
+    const minutes = Number(state.options.ai_min_interval), limit = Number(state.options.ai_daily_limit);
+    if (!Number.isFinite(minutes) || !Number.isInteger(limit)) { state.servicesError = 'Enter numbers for the pacing settings.'; render(); return; }
+    saveServices({ ai_backend: state.options.ai_backend, ai_model: state.options.ai_model.trim(), ai_min_interval: Math.round(minutes * 60), ai_daily_limit: limit }, 'Claude settings saved');
+  }
+  async function toggleClaude(user) {
+    if (state.busy) return;
+    state.busy = true; state.error = ''; render();
+    try {
+      await api(`/api/admin/accounts/${encodeURIComponent(user.id)}/ai`, { method: 'POST', body: { enabled: !user.ai } });
+      await load(); toast(user.ai ? 'Claude reviews turned off for this account' : 'Claude reviews turned on for this account');
+    } catch (error) { state.error = errorText(error); }
+    finally { state.busy = false; render(); }
+  }
+  async function removeInvitee(user) {
+    if (state.busy) return;
+    state.busy = true; state.error = ''; render();
+    try {
+      await api(`/api/admin/accounts/${encodeURIComponent(user.id)}/remove`, { method: 'POST' });
+      if (state.link && state.link.email === user.email) state.link = null;
+      await load(); toast('Invitation removed');
+    } catch (error) { state.error = errorText(error); }
+    finally { state.busy = false; render(); }
+  }
+  function renderServices() {
+    const data = state.services;
+    if (!data) return null;
+    const settings = data.settings;
+    const source = item => item.source === 'admin' ? 'Saved on this page' : item.source === 'environment' ? 'Set in the server environment' : 'Not set';
+    const backend = { cli: 'your Claude subscription (claude -p)', api: 'the Anthropic API key' };
+    const secret = (key, label, hint) => h('form', { class: 'service-key', onsubmit: event => { event.preventDefault(); if (state.secrets[key]) saveServices({ [key]: state.secrets[key] }, label + ' saved'); } },
+      h('div', { class: 'service-key-head' }, h('label', { for: `service-${key}` }, label), h('span', { class: 'soft' }, source(settings[key]))),
+      h('div', { class: 'service-key-input' },
+        h('input', { id: `service-${key}`, class: 'input', type: 'password', autocomplete: 'off', placeholder: settings[key].set ? 'Enter a new key to replace it' : 'Paste the key', value: state.secrets[key] || '', oninput: event => { state.secrets[key] = event.target.value; } }),
+        h('button', { class: 'btn', type: 'submit', disabled: state.busy }, 'SAVE'),
+        settings[key].source === 'admin' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => saveServices({ [key]: null }, label + ' removed') }, 'REMOVE') : null),
+      hint ? h('p', { class: 'soft' }, hint) : null);
+    const option = (key, label, input) => [h('label', { for: `service-${key}` }, label), input];
+    return h('section', { class: 'service-settings' },
+      h('h2', null, 'Claude reviews'),
+      h('p', null, data.owner_backend ? `Your library is reviewed with ${backend[data.owner_backend]}.` : !data.owner_switch ? 'Claude reviews are off for your library: turn CLAUDE on next to your name under People.' : settings.ai_backend.value === 'off' ? 'Claude reviews are off: choose what to use below.' : 'Claude reviews are off for your library: add a subscription token or an API key.',
+        ' ', data.member_backend ? 'Other people’s libraries can use the API key once you turn Claude on for them below.' : 'Other people’s libraries need an API key; your subscription only reviews your own library.'),
+      secret('claude_oauth_token', 'CLAUDE SUBSCRIPTION TOKEN', `Run claude setup-token on a computer where you’re signed in to Claude, then paste the token. Corpus runs ${data.claude_bin}.`),
+      secret('anthropic_api_key', 'ANTHROPIC API KEY', 'Used instead of the subscription when both are set, unless you prefer the subscription below.'),
+      h('form', { class: 'passkey-form', onsubmit: saveOptions },
+        ...option('ai_backend', 'USE', h('select', { id: 'service-ai_backend', class: 'input', onchange: event => { state.options.ai_backend = event.target.value; } },
+          ...[['auto', 'API key if set, otherwise subscription'], ['cli', 'Subscription only'], ['api', 'API key only'], ['off', 'Nothing: Claude reviews off']].map(([value, label]) => h('option', { value, selected: state.options.ai_backend === value }, label)))),
+        ...option('ai_model', 'MODEL', h('input', { id: 'service-ai_model', class: 'input', value: state.options.ai_model, required: true, oninput: event => { state.options.ai_model = event.target.value; } })),
+        ...option('ai_min_interval', 'MINUTES BETWEEN REVIEWS', h('input', { id: 'service-ai_min_interval', class: 'input', type: 'number', min: 0, max: 1440, step: 0.5, value: state.options.ai_min_interval, required: true, oninput: event => { state.options.ai_min_interval = event.target.value; } })),
+        ...option('ai_daily_limit', 'REVIEWS PER DAY (0: NO LIMIT)', h('input', { id: 'service-ai_daily_limit', class: 'input', type: 'number', min: 0, max: 10000, step: 1, value: state.options.ai_daily_limit, required: true, oninput: event => { state.options.ai_daily_limit = event.target.value; } })),
+        h('div', { class: 'account-actions' },
+          h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.busy }, 'SAVE CLAUDE SETTINGS'),
+          ['ai_backend', 'ai_model', 'ai_min_interval', 'ai_daily_limit'].some(key => settings[key].source === 'admin') ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => saveServices({ ai_backend: null, ai_model: null, ai_min_interval: null, ai_daily_limit: null }, 'Server defaults restored') }, 'USE SERVER DEFAULTS') : null)),
+      h('h2', null, 'Paper metadata keys'),
+      secret('s2_api_key', 'SEMANTIC SCHOLAR API KEY', 'Finds published venues for ICLR, ICML and AISTATS preprints.'),
+      secret('openalex_api_key', 'OPENALEX API KEY', 'Optional; OpenAlex also works without a key.'),
+      h('p', { class: 'soft' }, 'Keys are stored on the server outside the database, so nightly backups don’t copy them. They are never shown again after saving.'),
+      notice(state.servicesError));
   }
   async function connectResend(event) {
     event.preventDefault();
@@ -85,9 +162,9 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     if (state.busy) return;
     state.busy = true; state.error = ''; render();
     try {
-      await api(`/api/admin/invitations/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+      const result = await api(`/api/admin/invitations/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
       if (state.link && state.link.id === id) state.link = null;
-      await load(); toast('Invitation revoked');
+      await load(); toast(result.removed ? 'Invitation revoked and removed' : 'Invitation revoked');
     } catch (error) { state.error = errorText(error); }
     finally { state.busy = false; render(); }
   }
@@ -165,7 +242,7 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
     const link = state.link;
     const mailBody = link ? `I'd like you to try Corpus, a research library for collecting and reviewing papers.\n\nSet up your private account here:\n${link.url}\n\nThe link expires in 72 hours. I'd love to hear what you think!` : '';
     return h('main', { class: 'passkeys-layout' }, h('section', { class: 'passkeys-panel admin-panel' },
-      h('h1', null, 'People & invitations'),
+      h('h1', null, 'People & services'),
       h('p', null, 'Invite friends to try Corpus. Each person gets a private library. You manage invitations and account access.'),
       !state.emailEnabled ? h('p', { class: 'notice' }, 'Automatic email sending is not connected. Create a link and send it from your usual email app.') : null,
       !state.emailEnabled ? h('section', { class: 'invitation-result' },
@@ -194,14 +271,17 @@ window.CorpusAccounts = function ({ h, api, render, toast, session }) {
       state.loading ? h('p', null, 'Loading…') : null,
       ...state.users.map(user => h('div', { class: 'account-row' },
         h('div', null, h('strong', null, user.email || 'You'), h('div', { class: 'soft' }, user.role === 'admin' ? 'Administrator' : user.status === 'invited' ? 'Invited · waiting for setup' : user.status === 'disabled' ? 'Disabled' : 'Active')),
-        user.role !== 'admin' ? h('div', { class: 'account-actions' },
-          h('button', { class: 'btn', type: 'button', disabled: state.busy || user.status === 'disabled', onclick: () => invite('link', user.email) }, user.status === 'invited' ? 'NEW INVITATION' : 'PASSWORD RESET LINK'),
-          user.status !== 'invited' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => status(user) }, user.status === 'disabled' ? 'ENABLE' : 'DISABLE') : null) : null)),
+        h('div', { class: 'account-actions' },
+          user.status !== 'invited' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, 'aria-pressed': String(user.ai), title: user.role === 'admin' ? 'Claude reviews for your library' : 'Claude reviews for this library, with the API key', onclick: () => toggleClaude(user) }, user.ai ? 'CLAUDE: ON' : 'CLAUDE: OFF') : null,
+          user.role !== 'admin' ? h('button', { class: 'btn', type: 'button', disabled: state.busy || user.status === 'disabled', onclick: () => invite('link', user.email) }, user.status === 'invited' ? 'NEW INVITATION' : 'PASSWORD RESET LINK') : null,
+          user.role !== 'admin' && user.status === 'invited' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => removeInvitee(user) }, 'REMOVE') : null,
+          user.role !== 'admin' && user.status !== 'invited' ? h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => status(user) }, user.status === 'disabled' ? 'ENABLE' : 'DISABLE') : null))),
       h('h2', null, 'Pending links'),
       !state.invitations.length ? h('p', { class: 'soft' }, 'No pending invitations.') : null,
       ...state.invitations.map(item => h('div', { class: 'account-row' },
         h('div', null, item.email, h('div', { class: 'soft' }, `Expires ${date(item.expires)}`)),
-        h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => revoke(item.id) }, 'REVOKE')))
+        h('button', { class: 'btn', type: 'button', disabled: state.busy, onclick: () => revoke(item.id) }, 'REVOKE'))),
+      renderServices()
     ));
   }
   return { hasInvitation: () => Boolean(token), inspect, renderInvitation, renderAccount, renderAdmin, load };

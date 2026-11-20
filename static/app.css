@@ -649,6 +649,11 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 
 /* Account administration follows the existing compact settings panels. */
 .admin-panel h2 { margin: 22px 0 8px; font: 600 18px var(--display); }
+.service-settings { margin-top: 8px; }
+.service-key { margin: 12px 0; }
+.service-key-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font: 10.5px/1.4 var(--mono); }
+.service-key-input { display: flex; gap: 6px; margin-top: 4px; }
+.service-key-input .input { flex: 1; min-width: 0; }
 .account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .invitation-result { padding: 14px; margin: 16px 0; border: 1px solid var(--line); background: var(--surface-2); }

@@ -37,6 +37,8 @@ class Settings:
     # Member libraries are copies of the owner's settings with this unset: a
     # personal Claude subscription only ever reviews the owner's own library.
     owner_library: bool = True
+    # The administrator's per-account Claude switch (see accounts.refresh_settings).
+    ai_allowed: bool = True
     ai_poll_interval: float = 30.0
     # Queue pacing state, shared by every library (members inherit the owner's path).
     ai_state_file: Path | None = None

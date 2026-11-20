@@ -33,34 +33,37 @@ The Claude bar in the Inbox shows the state: the next review, a pause and its re
 
 A subscription is shared with your own Claude use. Keep the daily limit well below what you need for yourself.
 
-## Set up with your Claude subscription
+## Set up
 
-This uses the Claude CLI in headless mode (`claude -p`) with no tools, settings, memory or saved sessions. Paper text can't make it run anything.
+Everything below is on the **ADMIN** page, under **Claude reviews**. Keys saved there override the server environment, and **REMOVE** falls back to it again. They are stored in `service-config.json` in the data folder (readable only by the Corpus service), not in a database, so nightly backups don't copy them. They are never shown again after saving.
 
-1. On a machine where you're signed in to Claude, run `claude setup-token` and copy the long-lived token it prints.
-2. Make the CLI available to the service user, for example:
+### With your Claude subscription
+
+This runs the Claude CLI in headless mode (`claude -p`) with no tools, settings, memory or saved sessions. Paper text can't make it run anything.
+
+1. Make the CLI available to the service user, for example:
 
    ```sh
    sudo install -m 0755 "$(readlink -f ~/.local/bin/claude)" /usr/local/bin/claude
    ```
 
-   Corpus disables the CLI's auto-updater, so update it by repeating this step.
-3. Add the token to the service's environment file (`/etc/corpus/corpus.env`), without echoing it to your shell history:
+   and set `CORPUS_CLAUDE_BIN=/usr/local/bin/claude` in `/etc/corpus/corpus.env`, then restart Corpus. The path can only be set on the server, never from the browser. Corpus disables the CLI's auto-updater, so update it by repeating the copy.
+2. On a computer where you're signed in to Claude, run `claude setup-token`.
+3. Paste the token into **CLAUDE SUBSCRIPTION TOKEN** on the admin page.
 
-   ```sh
-   sudoedit /etc/corpus/corpus.env
-   # CLAUDE_CODE_OAUTH_TOKEN=<the token>
-   # CORPUS_CLAUDE_BIN=/usr/local/bin/claude
-   ```
-4. Restart Corpus: `sudo systemctl restart corpus`.
+The CLI runs with its own empty home folder (`claude-home` in the data folder), so it never sees your personal Claude settings.
 
-The CLI runs with its own empty home folder (`claude-home` in the data folder), so it never sees your personal Claude settings. A subscription only reviews the owner's library: other accounts' libraries need an API key.
+### With an Anthropic API key
 
-## Set up with an Anthropic API key
+Paste it into **ANTHROPIC API KEY**. With both a key and a subscription token, the key is used, unless **USE** is set to **Subscription only**. Requests use structured outputs and prompt caching, and, for current models, a server-side fallback model when a paper trips a safety classifier. The Inbox bar shows an estimate of this month's spend at list prices.
 
-Set `ANTHROPIC_API_KEY` in the environment file and restart. With both a key and a subscription token, the key is used; set `CORPUS_AI_BACKEND=cli` to prefer the subscription, or `off` to stop reviews. Requests use structured outputs and prompt caching, and, for current models, a server-side fallback model when a paper trips a safety classifier. The Inbox bar shows an estimate of this month's spend at list prices.
+### Who gets reviews
+
+Each person on the **People** list has a **CLAUDE: ON/OFF** switch. It is on for you and off for everyone else until you turn it on. Your subscription only ever reviews your own library; other people's libraries are reviewed only with the API key.
 
 ## Settings
+
+The admin page sets everything except `CORPUS_CLAUDE_BIN` and `CORPUS_AI_REVIEWS`. The environment variables give the defaults:
 
 | Variable | Default | Meaning |
 |---|---|---|

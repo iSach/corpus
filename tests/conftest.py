@@ -14,6 +14,7 @@ def no_real_claude(monkeypatch):
     """Settings read credentials from the environment; never let a test reach Claude."""
     for name in ('ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CORPUS_AI_BACKEND'):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('CORPUS_CLAUDE_BIN', '/nonexistent/claude')
 
 
 @pytest.fixture

@@ -29,6 +29,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .db import connection, initialize
+from .service_config import ServiceConfig, KEYS as SERVICE_KEYS
 
 INVITE_TTL = 72 * 3600
 INGEST_PREFIX = 'cps_'
@@ -67,6 +68,7 @@ class Accounts:
         self.session_lock = threading.Lock()
         self.invite_lock = threading.Lock()
         self.libraries = {'owner': owner}
+        self.config = ServiceConfig(owner)
 
     @contextmanager
     def registry(self):
@@ -102,8 +104,23 @@ class Accounts:
                     token_hash TEXT NOT NULL UNIQUE, created REAL NOT NULL
                 );
             ''')
-            db.execute("INSERT OR IGNORE INTO users VALUES('owner',?,'admin','active',?)",
+            if 'ai' not in [row[1] for row in db.execute('PRAGMA table_info(users)')]:
+                # Claude reviews: on for the administrator, off for members until enabled.
+                db.execute('ALTER TABLE users ADD COLUMN ai INTEGER NOT NULL DEFAULT 0')
+                db.execute("UPDATE users SET ai=1 WHERE role='admin'")
+            db.execute("INSERT OR IGNORE INTO users(id,email,role,status,created,ai) VALUES('owner',?,'admin','active',?,1)",
                        (email_address(self.owner.admin_email) if self.owner.admin_email else None, time.time()))
+        self.refresh_settings()
+
+    def refresh_settings(self):
+        """Apply admin-page service settings and each account's Claude switch to every loaded library."""
+        values = self.config.values()
+        with self.registry() as db:
+            allowed = {row['id']: bool(row['ai']) for row in db.execute('SELECT id,ai FROM users')}
+        for user_id, settings in list(self.libraries.items()):
+            for key in SERVICE_KEYS:
+                setattr(settings, key, values[key])
+            settings.ai_allowed = allowed.get(user_id, False)
 
     def user(self, user_id=None):
         with self.registry() as db:
@@ -164,6 +181,7 @@ class Accounts:
             folder = self.owner.data_dir / 'users' / user_id
             self.libraries[user_id] = replace(self.owner, data_dir=folder, cache_dir=folder/'pdfs',
                 fields=[{'id':'unfiled','label':'Unfiled'}], password='', ingest_token='', dev=False, owner_library=False)
+            self.refresh_settings()
         return self.libraries[user_id]
 
     def session_user(self, request):
@@ -193,6 +211,17 @@ class Accounts:
     def revoke_sessions(self, user_id):
         with self.session_lock:
             self.sessions = {key:value for key,value in self.sessions.items() if value[0] != user_id}
+
+    def remove_invitee(self, db, user_id):
+        """Delete an invited account once it has no usable link left. Returns whether it was removed."""
+        user = db.execute("SELECT status FROM users WHERE id=? AND role='member'", (user_id,)).fetchone()
+        live = db.execute('SELECT 1 FROM invitations WHERE user_id=? AND used IS NULL AND revoked=0 AND expires>?', (user_id, time.time())).fetchone()
+        if not user or user['status'] != 'invited' or live:
+            return False
+        for table in ('invitations', 'ingest_tokens'):
+            db.execute('DELETE FROM '+table+' WHERE user_id=?', (user_id,))
+        db.execute('DELETE FROM users WHERE id=?', (user_id,))
+        return True
 
     def require_admin(self, request):
         user = self.session_user(request)
@@ -287,7 +316,7 @@ class Accounts:
                 raise ValueError('Enable this account before sending a new invitation')
             user_id = user['id'] if user else uuid.uuid4().hex
             if not user:
-                db.execute("INSERT INTO users VALUES(?,?,'member','invited',?)", (user_id,email,time.time()))
+                db.execute("INSERT INTO users(id,email,role,status,created) VALUES(?,?,'member','invited',?)", (user_id,email,time.time()))
             db.execute('INSERT INTO invitations(id,user_id,token_hash,expires) VALUES(?,?,?,?)',
                        (invitation_id,user_id,hashlib.sha256(token.encode()).hexdigest(),expires))
         url = origin.rstrip('/') + '/#invite=' + token
@@ -348,7 +377,7 @@ def install_routes(app, accounts, limits, hash_password, start_workers):
     def users(request:Request):
         accounts.require_admin(request)
         with accounts.registry() as db:
-            users = [dict(row) for row in db.execute('SELECT id,email,role,status,created FROM users ORDER BY created')]
+            users = [{**dict(row), 'ai': bool(row['ai'])} for row in db.execute('SELECT id,email,role,status,created,ai FROM users ORDER BY created')]
             invitations = [dict(row) for row in db.execute('''SELECT i.id,u.email,i.expires FROM invitations i JOIN users u ON u.id=i.user_id
                 WHERE i.used IS NULL AND i.revoked=0 AND i.ready=1 AND i.expires>? ORDER BY i.expires DESC''', (time.time(),))]
         return {'users':users, 'invitations':invitations, 'email_enabled':accounts.email_enabled,
@@ -377,8 +406,60 @@ def install_routes(app, accounts, limits, hash_password, start_workers):
     def revoke(request:Request, id:str):
         accounts.require_admin(request)
         with accounts.registry() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT user_id FROM invitations WHERE id=?', (id,)).fetchone()
             db.execute('UPDATE invitations SET revoked=1 WHERE id=?', (id,))
-        return {'revoked':True}
+            removed = bool(row) and accounts.remove_invitee(db, row['user_id'])
+        return {'revoked':True, 'removed':removed}
+
+    @app.post('/api/admin/accounts/{id}/remove')
+    def remove(request:Request, id:str):
+        """Forget someone who was invited but never set up an account."""
+        accounts.require_admin(request)
+        with accounts.registry() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('UPDATE invitations SET revoked=1 WHERE user_id=? AND used IS NULL', (id,))
+            if not accounts.remove_invitee(db, id):
+                raise ValueError('Only people who never set up their account can be removed')
+        return {'removed':True}
+
+    @app.post('/api/admin/accounts/{id}/ai')
+    async def account_ai(request:Request, id:str, body:dict):
+        accounts.require_admin(request)
+        if not isinstance(body.get('enabled'), bool):
+            raise ValueError('enabled must be true or false')
+        with accounts.registry() as db:
+            row = db.execute("SELECT status FROM users WHERE id=?", (id,)).fetchone()
+            if not row:
+                raise HTTPException(404, 'Account not found')
+            db.execute('UPDATE users SET ai=? WHERE id=?', (int(body['enabled']), id))
+        accounts.refresh_settings()
+        if row['status'] == 'active':
+            start_workers(id)
+        return {'ai':body['enabled']}
+
+    @app.get('/api/admin/services')
+    def services(request:Request):
+        accounts.require_admin(request)
+        return service_status()
+
+    @app.put('/api/admin/services')
+    async def update_services(request:Request, body:dict):
+        accounts.require_admin(request)
+        limited(request, 'service-config', 30)
+        accounts.config.save(body)
+        accounts.refresh_settings()
+        with accounts.registry() as db:
+            active = [row['id'] for row in db.execute("SELECT id FROM users WHERE status='active'")]
+        for user_id in active:
+            start_workers(user_id)
+        return service_status()
+
+    def service_status():
+        from .ai_review import backend
+        return {'settings':accounts.config.describe(), 'owner_backend':backend(accounts.owner), 'owner_switch':accounts.owner.ai_allowed,
+                'member_backend':'api' if accounts.owner.anthropic_api_key and accounts.owner.ai_backend in ('auto','api') else None,
+                'claude_bin':accounts.owner.claude_bin}
 
     @app.post('/api/admin/accounts/{id}/status')
     async def status(request:Request, id:str, body:dict):
