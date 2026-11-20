@@ -51,6 +51,25 @@ def test_topic_facets_show_overlap_with_ticked_topics(page):
     expect(sbi).to_have_attribute('title','')
 
 
+def test_ticked_facet_keeps_its_siblings_greyed_in_place(page):
+    expect(page.locator('.paper-row')).to_have_count(3)
+    status=page.locator('.facet-section',has=page.locator('.facet-title',has_text='STATUS'))
+    reviewed=status.locator('.facet-option',has_text='reviewed').filter(has_not_text='unreviewed')
+    unreviewed=status.locator('.facet-option',has_text='unreviewed')
+    expect(status.locator('.facet-option')).to_have_count(2)
+    reviewed.locator('input').check()
+    expect(page.locator('.paper-row')).to_have_count(1)
+    # The sibling stays in place with its own count, greyed because no current result has it.
+    expect(status.locator('.facet-option')).to_have_count(2)
+    expect(status.locator('.facet-label')).to_have_text(['reviewed','unreviewed'])
+    expect(unreviewed.locator('.facet-count')).to_have_text('2')
+    expect(unreviewed).to_have_class('facet-option facet-option-empty')
+    expect(unreviewed).to_have_attribute('title','None in the current results; 2 with the other filters')
+    unreviewed.locator('input').check()
+    expect(page.locator('.paper-row')).to_have_count(3)
+    expect(unreviewed).to_have_class('facet-option')
+    expect(reviewed.locator('.facet-count')).to_have_text('1')
+
 def test_triage_save_and_export(page,site):
     page.get_by_role('searchbox',name='Search query').fill('Beta')
     expect(page.locator('.paper-row')).to_have_count(1)
