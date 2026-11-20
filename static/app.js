@@ -1318,18 +1318,9 @@
     return h('header', { class: 'topbar' },
       h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
       nav,
-      h('div', { class: 'ingest-summary' }, latestRunSummary(stats, unreviewed)),
       actions
     );
   }
-  function latestRunSummary(stats, unreviewed) {
-    const runs = Array.isArray(stats.runs) ? stats.runs : [];
-    const latest = runs[runs.length - 1];
-    if (latest) return `ingest ${formatDate(latest.timestamp)} · +${Number(latest.proposed || 0)} proposed`;
-    if (unreviewed != null) return `${unreviewed} unreviewed`;
-    return 'ingest —';
-  }
-
   function renderQueryBar() {
     const query = h('div', { class: 'query-wrap' },
       h('span', { class: 'query-prompt', ariaHidden: 'true' }, '>'),
