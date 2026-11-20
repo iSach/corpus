@@ -1668,8 +1668,7 @@
       ariaLabel: `Show ${item.title}`, 'aria-pressed': String(inbox.selectedId === item.id), onclick: () => { inbox.mobileList = false; loadInboxPaper(item.id); }
     }, h('span', { class: 'inbox-item-main' },
       h('span', { class: 'inbox-item-title' }, item.title),
-      h('span', { class: 'inbox-item-meta' }, projectName(item.field), ` · ${fmt(item.year)} · ${formatDate(item.added)}`),
-      h('span', { class: 'inbox-item-meta' }, item.assessor && item.assessor !== 'not-assessed' ? `${item.priority} relevance · ${item.stage === 'full_text' ? 'full text' : 'abstract'}` : 'awaiting assessment')),
+      h('span', { class: 'inbox-item-meta' }, projectName(item.field), ` · ${fmt(item.year)} · ${formatDate(item.added)}`, item.assessor && item.assessor !== 'not-assessed' ? ` · ${item.priority} · ${item.stage === 'full_text' ? 'full text' : 'abstract'}` : '')),
     h('span', { class: 'inbox-item-scores' }, ...SCORE_KEYS.map(key => h('span', { class: `score-value ${scoreClass(item[`proposed_${key}`])}`, title: SCORE_LABELS[key] }, scoreLabel(item[`proposed_${key}`]))))));
     const pager = h('div', { class: 'table-footer inbox-pagination' },
       h('button', { class: 'btn', type: 'button', ariaLabel: 'Inbox previous page', disabled: inbox.busy || inbox.offset <= 0, onclick: () => { inbox.offset = Math.max(0, inbox.offset - inbox.limit); loadInbox(); } }, '‹'),
@@ -1721,7 +1720,7 @@
       inbox.error ? h('div', { class: 'notice error-text', role: 'alert' }, inbox.error) : null,
       inbox.lastDecision ? h('div', { class: 'inbox-undo', role: 'status' }, `Last decision: ${inbox.lastDecision.after}. `, h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: undoInboxDecision }, 'UNDO LAST DECISION')) : null,
       h('div', { class: 'inbox-layout' }, filters,
-        h('aside', { class: 'inbox-queue table-region', ariaLabel: 'Discovery queue' }, h('div', { class: 'table-head inbox-list-head' }, h('span', { class: 'inbox-head-title' }, `PAPERS · ${inbox.total} ${inbox.status}`), h('span', { class: 'inbox-item-scores' }, ...SCORE_KEYS.map(key => h('span', { title: SCORE_LABELS[key] }, key.toUpperCase())))),
+        h('aside', { class: 'inbox-queue table-region', ariaLabel: 'Discovery queue' }, h('div', { class: 'table-head inbox-list-head' }, h('span', { class: 'inbox-head-title' }, `PAPERS · ${inbox.total} ${inbox.status}`), h('span', { class: 'inbox-item-scores' }, ...SCORE_KEYS.map(key => h('span', { title: SCORE_LABELS[key] }, key === 'reimpl' ? 'IMPL' : key.toUpperCase())))),
           h('div', { class: 'inbox-items', 'data-scroll-key': 'inbox-items' }, ...rows, !rows.length ? h('div', { class: 'empty' }, inbox.loading ? 'Loading discoveries…' : inbox.status === 'later' ? 'No papers set aside.' : 'No papers in this view.') : null), pager),
         h('section', { class: 'detail-pane inbox-detail', ariaLabel: 'Discovery details' }, detail)),
       h('div', { class: 'inbox-shortcuts' }, 'a approve · d dismiss · j/k move · u undo · approval and reading are separate')
