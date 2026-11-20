@@ -158,6 +158,7 @@
       else if (key === 'checked' || key === 'selected' || key === 'multiple' || key === 'disabled' || key === 'hidden' || key === 'required' || key === 'autofocus') node[key] = Boolean(value);
       else if (key === 'value') node.value = value;
       else if (key === 'onclick' || key === 'oninput' || key === 'onchange' || key === 'onkeydown' || key === 'onkeyup' || key === 'onfocus' || key === 'onblur' || key === 'onsubmit' || key === 'onmousedown') node.addEventListener(key.slice(2), value);
+      else if (key === 'ontouchstart' || key === 'ontouchend') node.addEventListener(key.slice(2), value, { passive: true });
       else if (key === 'ariaLabel') node.setAttribute('aria-label', value);
       else if (key === 'ariaCurrent') node.setAttribute('aria-current', value);
       else if (key === 'ariaSelected') node.setAttribute('aria-selected', value);
@@ -578,10 +579,27 @@
     if (!inbox.papers.length || inbox.busy) return;
     const index = inbox.papers.findIndex(paper => paper.id === inbox.selectedId);
     const next = inbox.papers[Math.max(0, Math.min(inbox.papers.length - 1, index + delta))];
+    if (next.id === inbox.selectedId && !inbox.mobileList) return;
     inbox.mobileList = false;
     loadInboxPaper(next.id);
   }
 
+  // On a phone, a horizontal swipe on the open paper moves to the next or
+  // previous one. Decisions stay on buttons so a stray swipe can't file a paper.
+  let inboxSwipe = null;
+  function startInboxSwipe(event) {
+    const touch = event.touches.length === 1 ? event.touches[0] : null;
+    inboxSwipe = touch && window.matchMedia('(max-width: 700px)').matches ? { x: touch.clientX, y: touch.clientY, at: Date.now() } : null;
+  }
+  function endInboxSwipe(event) {
+    const start = inboxSwipe, touch = event.changedTouches[0];
+    inboxSwipe = null;
+    if (!start || !touch || state.inbox.editor || Date.now() - start.at > 600) return;
+    const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) / 2) return;
+    if (window.getSelection && String(window.getSelection())) return;
+    moveInboxSelection(dx < 0 ? 1 : -1);
+  }
   async function requestAiReview(paper) {
     const inbox = state.inbox;
     if (inbox.busy || !paper) return;
@@ -1671,16 +1689,22 @@
       const links = (paper.artifacts || []).map(artifact => h('a', { class: 'artifact-link', href: artifact.local_path ? `/api/artifacts/${artifact.id}/file` : artifact.url, target: '_blank', rel: 'noopener' }, `OPEN ${artifact.kind.toUpperCase()} ↗`));
       const fullChecked = paper.review && paper.review.current && paper.review.current.stage === 'full_text';
       const actions = inbox.status === 'later' ? [h('button', { class: 'btn btn-primary', type: 'button', disabled: inbox.busy, onclick: () => decideInbox('resume') }, 'RETURN TO PENDING')] : paper.admission === 'pending' ? [
-        h('button', { class: 'btn btn-primary', type: 'button', disabled: inbox.busy || Boolean(inbox.editor), onclick: () => decideInbox('approve') }, fullChecked ? 'APPROVE & NEXT' : paper.abstract ? 'APPROVE FROM ABSTRACT' : 'APPROVE WITHOUT ASSESSMENT'),
-        h('button', { class: 'btn', type: 'button', disabled: inbox.busy || Boolean(inbox.editor), onclick: () => decideInbox('dismiss') }, 'DISMISS & NEXT'),
+        h('button', { class: 'btn btn-primary inbox-approve', type: 'button', disabled: inbox.busy || Boolean(inbox.editor), onclick: () => decideInbox('approve') }, fullChecked ? 'APPROVE & NEXT' : paper.abstract ? 'APPROVE FROM ABSTRACT' : 'APPROVE WITHOUT ASSESSMENT'),
+        h('button', { class: 'btn inbox-dismiss', type: 'button', disabled: inbox.busy || Boolean(inbox.editor), onclick: () => decideInbox('dismiss') }, 'DISMISS & NEXT'),
         h('button', { class: 'btn', type: 'button', disabled: inbox.busy || Boolean(inbox.editor), onclick: () => decideInbox('defer') }, 'LATER')
       ] : paper.admission === 'dismissed' ? [h('button', { class: 'btn btn-primary', type: 'button', disabled: inbox.busy, onclick: () => decideInbox('restore') }, 'RESTORE TO INBOX')] : [
         h('button', { class: 'btn btn-primary', type: 'button', onclick: () => navigate('library', paper.id) }, 'OPEN IN LIBRARY'),
         h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: () => decideInbox('return') }, 'MOVE BACK TO INBOX')
       ];
-      detail = h('article', { class: 'inbox-paper' },
+      const index = inbox.papers.findIndex(row => row.id === paper.id);
+      const mobileBar = h('nav', { class: 'inbox-mobile-bar', ariaLabel: 'Paper navigation' },
+        h('button', { class: 'btn btn-quiet inbox-mobile-back', type: 'button', ariaLabel: 'Back to papers', onclick: () => { inbox.mobileList = true; inbox.filtersOpen = false; render(); } }, '← LIST'),
+        h('span', { class: 'inbox-mobile-position' }, index < 0 ? '' : `${inbox.offset + index + 1} / ${inbox.total}`),
+        h('button', { class: 'btn btn-quiet', type: 'button', ariaLabel: 'Previous paper', disabled: inbox.busy || index <= 0, onclick: () => moveInboxSelection(-1) }, '‹'),
+        h('button', { class: 'btn btn-quiet', type: 'button', ariaLabel: 'Next paper', disabled: inbox.busy || index < 0 || index >= inbox.papers.length - 1, onclick: () => moveInboxSelection(1) }, '›'));
+      detail = h('article', { class: 'inbox-paper' }, mobileBar,
+        h('div', { class: 'inbox-scroll', 'data-scroll-key': 'inbox-scroll', ontouchstart: startInboxSwipe, ontouchend: endInboxSwipe },
         h('header', { class: 'detail-header inbox-paper-header' },
-          h('button', { class: 'btn btn-quiet inbox-mobile-back', type: 'button', ariaLabel: 'Back to papers', onclick: () => { inbox.mobileList = true; inbox.filtersOpen = false; render(); } }, '← PAPERS'),
           h('div', { class: 'detail-id' }, h('span', null, paper.arxiv_id || paper.doi || paper.openreview_id || paper.id), h('span', null, projectName(paper.field))),
           h('h1', { class: 'detail-title inbox-paper-title' }, paper.title),
           h('div', { class: 'detail-meta inbox-paper-meta' }, `${authorsToText(paper.authors)} · ${fmt(paper.venue)} · ${fmt(paper.year)}`),
@@ -1695,11 +1719,11 @@
             paper.proposed_reason ? h('p', { class: 'inbox-reason' }, paper.proposed_reason) : null) : null,
           paper.notes ? h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'MY NOTE'), h('div', { class: 'detail-note' }, paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes)) : null,
           h('section', { class: 'detail-section' }, h('details', { class: 'inbox-provenance', 'data-disclosure-key': `discovery:${paper.id}` }, h('summary', null, 'Discovery history'),
-            h('p', { class: 'review-hint' }, paper.inbox_origin === 'existing' ? 'Existing automatic import' : 'New discovery'), h('div', { class: 'provenance' }, ...provenance)))),
+            h('p', { class: 'review-hint' }, paper.inbox_origin === 'existing' ? 'Existing automatic import' : 'New discovery'), h('div', { class: 'provenance' }, ...provenance))))),
         h('footer', { class: 'inbox-actionbar' }, h('div', { class: 'inbox-decision-actions' }, ...actions),
-          h('div', { class: 'review-hint' }, inbox.editor ? 'Save or cancel your assessment before deciding.' : paper.admission === 'pending' ? 'Approval adds to the library · leaves unread' : paper.admission === 'dismissed' ? 'Dismissed · restore to consider again' : 'In your library · reading status unchanged')));
+          h('div', { class: `review-hint${inbox.editor ? '' : ' inbox-action-hint'}` }, inbox.editor ? 'Save or cancel your assessment before deciding.' : paper.admission === 'pending' ? 'Approval adds to the library · leaves unread' : paper.admission === 'dismissed' ? 'Dismissed · restore to consider again' : 'In your library · reading status unchanged')));
     }
-    return h('main', { class: `inbox-screen${inbox.filtersOpen ? ' filters-open' : ''}${inbox.mobileList || !inbox.selectedId ? ' mobile-list' : ''}` },
+    return h('main', { class: `inbox-screen${inbox.filtersOpen ? ' filters-open' : ''}${inbox.mobileList || !inbox.selectedId ? ' mobile-list' : ' mobile-reading'}` },
       query, tabs,
       inbox.error ? h('div', { class: 'notice error-text', role: 'alert' }, inbox.error) : null,
       inbox.lastDecision ? h('div', { class: 'inbox-undo', role: 'status' }, `Last decision: ${inbox.lastDecision.after}. `, h('button', { class: 'btn', type: 'button', disabled: inbox.busy, onclick: undoInboxDecision }, 'UNDO LAST DECISION')) : null,
