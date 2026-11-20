@@ -38,6 +38,15 @@ class SourceError(ValueError):
     """A clear, user-facing failure while recognizing or fetching a source."""
 
 
+class HTTPStatusError(SourceError):
+    """A non-success HTTP status; keeps the status and any Retry-After header."""
+
+    def __init__(self, status: int, retry_after: str | None = None):
+        super().__init__(f"source returned HTTP {status}")
+        self.status = status
+        self.retry_after = retry_after
+
+
 class MetadataFetchError(SourceError):
     """A transport or response-parsing failure after identifier recognition."""
 
@@ -354,7 +363,7 @@ def _request_once(
             # prevents an unbounded redirect body from consuming memory.
             return response.status, response_headers, b""
         if response.status < 200 or response.status >= 300:
-            raise SourceError(f"source returned HTTP {response.status}")
+            raise HTTPStatusError(response.status, response_headers.get("retry-after"))
 
         chunks: list[bytes] = []
         total = 0

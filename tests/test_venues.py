@@ -16,6 +16,23 @@ FIELDS = [{"id": "unfiled", "label": "Unfiled"}]
 TITLE = "Amortized inference with implicit flows"
 
 
+@pytest.fixture(autouse=True)
+def no_pacing(monkeypatch):
+    monkeypatch.setattr(venues, "S2", venues.Pacer(sleep=lambda seconds: None))
+
+
+class Clock:
+    def __init__(self):
+        self.now, self.sleeps = 100.0, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(round(seconds, 3))
+        self.now += seconds
+
+
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(data_dir=tmp_path, dev=True, password="pw", ingest_token="token", pdf_jobs=False, fields=FIELDS)
@@ -168,3 +185,58 @@ def test_bibtex_cites_published_version_and_keeps_eprint(client):
     assert ddim.startswith("@inproceedings{") and "booktitle  = {International Conference on Learning Representations (ICLR)}" in ddim
     assert "year       = {2021}" in ddim and "eprint     = {2101.00001}" in ddim and "archiveprefix = {arXiv}" in ddim
     assert cfg.startswith("@article{") and "journal    = {arXiv preprint arXiv:2202.00002}" in cfg
+
+
+def test_semantic_scholar_calls_are_spaced_across_callers():
+    clock = Clock()
+    pacer = venues.Pacer(clock, clock.sleep)
+    for _ in range(3):
+        pacer.call(1.1, lambda: "ok")
+        clock.now += 0.2   # the rest of a check takes a moment
+    assert clock.sleeps == [0.9, 0.9]
+
+
+def test_rate_limit_pauses_every_caller_and_retries():
+    clock = Clock()
+    pacer = venues.Pacer(clock, clock.sleep)
+    answers = [sources.HTTPStatusError(429, "7"), "found"]
+
+    def request():
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    assert pacer.call(1.1, request) == "found"
+    assert clock.sleeps == [7.0]   # Retry-After honoured, then retried
+    assert pacer.call(1.1, lambda: "next") == "next"
+    assert clock.sleeps == [7.0, 1.1]
+
+
+def test_repeated_rate_limits_back_off_then_give_up():
+    clock = Clock()
+    pacer = venues.Pacer(clock, clock.sleep)
+    with pytest.raises(sources.SourceError, match="HTTP 429"):
+        pacer.call(1.1, lambda: (_ for _ in ()).throw(sources.SourceError("source returned HTTP 429")))
+    assert clock.sleeps == [5.0, 10.0]
+    assert pacer.next_slot - clock.now == 20.0   # the next caller waits too
+
+
+def test_other_errors_are_not_retried():
+    clock = Clock()
+    pacer = venues.Pacer(clock, clock.sleep)
+    calls = []
+
+    def request():
+        calls.append(1)
+        raise sources.HTTPStatusError(503)
+
+    with pytest.raises(sources.HTTPStatusError):
+        pacer.call(1.1, request)
+    assert calls == [1] and clock.sleeps == []
+
+
+def test_interval_defaults_follow_the_api_key():
+    assert venues.s2_interval(Settings(s2_api_key="k", s2_interval=0)) == 1.1
+    assert venues.s2_interval(Settings(s2_api_key="", s2_interval=0)) == 3.0
+    assert venues.s2_interval(Settings(s2_api_key="k", s2_interval=2.5)) == 2.5
