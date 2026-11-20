@@ -22,3 +22,29 @@ jobs:
       - run: python -m pytest -q
       - run: node --test "extensions/chrome/tests/*.test.js"
       - run: PYTHONPATH=. python tests/benchmark.py
+
+  deploy:
+    # Every push to main that passes the tests is deployed. Deploys queue
+    # instead of overlapping; the server deploys the newest tested main.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'iSach/corpus'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: corpus-deploy
+      cancel-in-progress: false
+    environment: production
+    steps:
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ vars.CORPUS_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.CORPUS_DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.CORPUS_DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.CORPUS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # The key's forced command runs the deploy whatever is sent here.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 "$DEPLOY_USER@$DEPLOY_HOST" deploy

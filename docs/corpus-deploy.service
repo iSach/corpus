@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy origin/main to /opt/corpus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# A standalone copy of scripts/deploy.sh: a push to main never changes what runs as root.
+ExecStart=/usr/local/sbin/corpus-deploy
+TimeoutStartSec=15min
