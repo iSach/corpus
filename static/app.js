@@ -215,6 +215,8 @@
   function score(value) { const n = number(value); return n == null ? null : Math.max(0, Math.min(10, n)); }
   function scoreLabel(value) { const n = score(value); return n == null ? '—' : String(n); }
   function scoreClass(value) { const n = score(value); return n == null ? '' : n >= 8 ? 'high' : n <= 5 ? 'low' : ''; }
+  // Amber heat tint: the theme accent, mixed in more strongly as the score rises (a curve, so 9s stand out from 6s).
+  function scoreHeat(value) { const n = score(value); return n == null || n === 0 ? null : { background: `color-mix(in srgb, var(--accent) ${Math.round(Math.pow(n / 10, 1.6) * 55)}%, transparent)` }; }
   function fieldLabel(id) {
     const found = (state.config.fields || []).find(f => String(f.id) === String(id));
     return found ? found.label : fmt(id);
@@ -1433,7 +1435,7 @@
         h('div', { class: 'table-cell title' }, h('span', { class: 'title-text', title: paper.title }, fmt(paper.title)), h('span', { class: 'authors' }, authorsToText(paper.authors))),
         h('div', { class: 'table-cell venue', title: paper.venue || '' }, fmt(paper.venue)),
         h('div', { class: 'table-cell year' }, fmt(paper.year)),
-        ...SCORE_KEYS.map(key => h('div', { class: 'table-cell score' }, scoreCell(paper[key], withBars))),
+        ...SCORE_KEYS.map(key => h('div', { class: 'table-cell score', style: withBars ? null : scoreHeat(paper[key]) }, scoreCell(paper[key], withBars))),
         h('div', { class: 'table-cell artifacts' }, artifacts.some(a => String(a.kind).toLowerCase() === 'pdf') ? h('span', { class: 'artifact-badge' }, 'PDF') : null, hasCode ? h('span', { class: 'artifact-badge code' }, 'SRC') : null),
         h('div', { class: 'table-cell added' }, formatDate(paper.added || paper.date_added))
       );
@@ -1689,7 +1691,7 @@
     }, h('span', { class: 'inbox-item-main' },
       h('span', { class: 'inbox-item-title' }, item.title),
       h('span', { class: 'inbox-item-meta' }, projectName(item.field), ` · ${fmt(item.year)} · ${formatDate(item.added)}`, item.assessor && item.assessor !== 'not-assessed' ? ` · ${item.priority} · ${item.stage === 'full_text' ? 'full text' : 'abstract'}` : '')),
-    h('span', { class: 'inbox-item-scores' }, ...SCORE_KEYS.map(key => h('span', { class: `score-value ${scoreClass(item[`proposed_${key}`])}`, title: SCORE_LABELS[key] }, scoreLabel(item[`proposed_${key}`]))))));
+    h('span', { class: 'inbox-item-scores' }, ...SCORE_KEYS.map(key => h('span', { class: `score-value ${scoreClass(item[`proposed_${key}`])}`, title: SCORE_LABELS[key], style: scoreHeat(item[`proposed_${key}`]) }, scoreLabel(item[`proposed_${key}`]))))));
     const pager = h('div', { class: 'table-footer inbox-pagination' },
       h('button', { class: 'btn', type: 'button', ariaLabel: 'Inbox previous page', disabled: inbox.busy || inbox.offset <= 0, onclick: () => { inbox.offset = Math.max(0, inbox.offset - inbox.limit); loadInbox(); } }, '‹'),
       h('span', null, `${inbox.total ? inbox.offset + 1 : 0}–${Math.min(inbox.offset + inbox.limit, inbox.total)} / ${inbox.total}`),

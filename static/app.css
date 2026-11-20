@@ -225,6 +225,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .score-value { width: 18px; text-align: right; }
 .score-value.high { color: var(--accent-dark); }
 .score-value.low { color: var(--muted); }
+/* Heat-tinted cells (numeric and ledger views, Inbox): strong scores sit on deep amber, so they read in ink rather than accent. */
+.table-region:not(.bars-view) .table-cell.score .score-value.high, .inbox-item-scores .score-value.high { color: var(--ink); font-weight: 500; }
 .score-bar { width: 32px; height: 4px; flex: none; background: var(--neutral-300); position: relative; }
 .score-bar > i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
 .score-bar > i.low { background: var(--muted); }
