@@ -61,7 +61,7 @@ def listing(db, query='', field='', status='pending', sort='relevance', limit=50
         params.append(field)
     total = db.execute('SELECT count(*)'+joins+'WHERE '+where, params).fetchone()[0]
     rows = db.execute(
-        "SELECT p.id,p.title,p.authors,p.venue,p.year,p.field,p.added,p.modified,p.admission,p.proposed_rel,p.inbox_origin,p.deferred_until,r.agent,a.priority,a.stage,a.confidence,a.assessor,coalesce(a.id,0)||':'||coalesce(c.status,'')||':'||coalesce(c.updated,'')||':'||coalesce((SELECT j.status||':'||j.updated FROM ai_review_jobs j WHERE j.paper_id=p.id ORDER BY j.id DESC LIMIT 1),'') review_revision "+joins+'WHERE '+where+' ORDER BY '+order+',p.id LIMIT ? OFFSET ?',
+        "SELECT p.id,p.title,p.authors,p.venue,p.year,p.field,p.added,p.modified,p.admission,p.proposed_rel,p.proposed_cred,p.proposed_qual,p.proposed_reimpl,p.inbox_origin,p.deferred_until,r.agent,a.priority,a.stage,a.confidence,a.assessor,coalesce(a.id,0)||':'||coalesce(c.status,'')||':'||coalesce(c.updated,'')||':'||coalesce((SELECT j.status||':'||j.updated FROM ai_review_jobs j WHERE j.paper_id=p.id ORDER BY j.id DESC LIMIT 1),'') review_revision "+joins+'WHERE '+where+' ORDER BY '+order+',p.id LIMIT ? OFFSET ?',
         [*params, limit, offset],
     ).fetchall()
     papers = [{**dict(row), 'authors':json.loads(row['authors'])} for row in rows]
