@@ -163,7 +163,7 @@ class Accounts:
         if user_id not in self.libraries:
             folder = self.owner.data_dir / 'users' / user_id
             self.libraries[user_id] = replace(self.owner, data_dir=folder, cache_dir=folder/'pdfs',
-                fields=[{'id':'unfiled','label':'Unfiled'}], password='', ingest_token='', dev=False)
+                fields=[{'id':'unfiled','label':'Unfiled'}], password='', ingest_token='', dev=False, owner_library=False)
         return self.libraries[user_id]
 
     def session_user(self, request):

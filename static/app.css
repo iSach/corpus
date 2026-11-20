@@ -301,6 +301,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .review-questions strong { font-weight: 500; }
 .review-questions ul { margin: 3px 0; padding-left: 18px; }
 .review-hint { color: var(--soft); font: 9.5px/1.5 var(--mono); }
+.claude-review p, .claude-review li { max-width: 78ch; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.5; }
+.claude-review p.review-hint { font: 9.5px/1.5 var(--mono); }
+.claude-review .claude-tldr { margin: 6px 0; font-weight: 500; }
+.claude-contributions, .claude-questions { margin: 4px 0 8px; padding-left: 18px; }
+.claude-topics { display: grid; gap: 6px; margin: 8px 0; }
+.claude-topic { padding: 5px 0 0; border-top: 1px solid var(--line-soft); }
+.claude-topic p { margin: 3px 0; }
+.claude-topic-head { display: flex; flex-wrap: wrap; gap: 2px 8px; font: 10.5px/1.4 var(--mono); }
+.claude-topic-name { font-weight: 600; }
+.claude-topic-score { color: var(--muted); }
+.claude-topic-score.review-high { color: var(--accent-dark); }
+.claude-suggestions strong, .claude-more strong { font-weight: 500; }
+.claude-more { margin: 6px 0; }
+.claude-more summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
+.claude-more blockquote { margin: 6px 0; padding-left: 8px; border-left: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
+.claude-queue { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 2px 12px; padding: 4px 10px; border-bottom: 1px solid var(--line); font: 10px/1.5 var(--mono); }
+.claude-backfill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .review-evidence details { margin: 6px 0; }
 .review-evidence summary, .inbox-provenance summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
 .review-comparison > p, .review-history-entry { margin: 5px 0; padding: 5px 0; font-size: 12px; line-height: 1.5; }

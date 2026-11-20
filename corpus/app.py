@@ -11,7 +11,7 @@ from .db import connection, initialize, validate_paper, find_duplicate, duplicat
 from .query import QueryError, compile_query
 from .exporting import export_papers, export_papers_list, get_preferences, save_preferences, set_exclusions
 from .stats import stats
-from .ai_review import worker as ai_worker, enabled as ai_enabled
+from .ai_review import worker as ai_worker, enabled as ai_enabled, backend as ai_backend, install_routes as install_ai_routes
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
 from .topics import list_topics, save_topic
@@ -185,7 +185,7 @@ def create_app(settings=None):
     @app.get('/api/config')
     def config(request:Request):
         with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')] if authenticated(request) else []
-        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model} if authenticated(request) or settings.dev else None}
+        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model,'backend':ai_backend(settings)} if authenticated(request) or settings.dev else None}
     @app.get('/api/topics')
     def topics():
         with connection(settings,True) as db: return {'topics':list_topics(db)}
@@ -218,6 +218,7 @@ def create_app(settings=None):
     install_passkey_routes(app,passkeys,limits,check_password,issue_session)
     install_inbox_routes(app,settings)
     install_review_routes(app,settings)
+    install_ai_routes(app,settings)
     install_capture_routes(app,settings,limits)
     install_venue_routes(app,settings,limits)
     @app.post('/api/logout')
