@@ -76,5 +76,5 @@ def test_color_migration_keeps_the_color_each_shape_used_to_have(tmp_path):
     db.execute("CREATE TABLE fields(id TEXT PRIMARY KEY, label TEXT, symbol TEXT NOT NULL DEFAULT '')")
     db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')
     db.executemany('INSERT INTO fields VALUES(?,?,?)', [('a','A','triangle'), ('b','B','pentagon'), ('c','C','')])
-    db.executescript((ROOT / 'migrations/014_topic_colors.sql').read_text())
+    db.executescript((ROOT / 'migrations/015_topic_colors.sql').read_text())
     assert db.execute('SELECT id,color FROM fields ORDER BY id').fetchall() == [('a','blue'), ('b','vermillion'), ('c','')]

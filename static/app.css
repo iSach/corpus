@@ -689,4 +689,3 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 :root[data-theme="midnight"] .artifact-badge, :root[data-theme="oled"] .artifact-badge,
 :root[data-theme="midnight"] .format-tabs, :root[data-theme="oled"] .format-tabs,
 :root[data-theme="midnight"] .format-tab, :root[data-theme="oled"] .format-tab { border-color: var(--line); }
-:root[data-theme="midnight"] .symbol-triangle, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-circle, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-square, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-diamond, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-star, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-cross, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-hexagon, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-pentagon, :root[data-theme="oled"] 
