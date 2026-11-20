@@ -81,7 +81,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   font: 600 19px/1 var(--display);
   letter-spacing: -.01em;
 }
-.brand-count { color: var(--soft); font: 10px/1 var(--mono); letter-spacing: .08em; }
 .screen-nav { display: flex; align-items: stretch; margin-right: auto; font: 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .screen-nav a {
   display: flex;
@@ -574,7 +573,6 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 @media (max-width: 1120px) {
   .library-layout { grid-template-columns: 170px minmax(0,1fr) 270px; }
   .detail-pane { width: auto; }
-  .brand-count { display: none; }
   .inbox-layout { grid-template-columns: 150px 330px minmax(0,1fr); }
   .capture-layout { grid-template-columns: 170px minmax(0,1fr) 270px; }
 }

@@ -1298,11 +1298,6 @@
   function artifactKinds(paper) { return Array.isArray(paper && paper.artifacts) ? paper.artifacts : []; }
 
   function renderHeader() {
-    const stats = state.stats || {};
-    const states = stats.states || {};
-    const refs = state.libraryTotal || state.total || 0;
-    const unreviewed = states.unreviewed == null ? null : states.unreviewed;
-    const summary = unreviewed == null ? `${refs.toLocaleString()} REFS` : `${refs.toLocaleString()} REFS · ${unreviewed} unreviewed`;
     const alert = claude.attention();
     const screens = ['library', 'inbox', 'stats', 'add', 'export', 'topics', ...(claude.available() ? ['claude'] : [])];
     const nav = h('nav', { class: 'screen-nav', ariaLabel: 'Primary navigation' }, ...screens.map(screen => h('a', {
@@ -1316,7 +1311,7 @@
       screen === 'claude' && alert ? h('span', { class: 'inbox-badge claude-badge', ariaHidden: true }, alert.mark) : null)));
     const actions = state.config.auth_required ? [state.session && state.session.user && state.session.user.role === 'admin' ? h('button', { class: 'header-action', type: 'button', onclick: () => navigate('admin') }, 'ADMIN') : null, h('button', { class: 'header-action', type: 'button', onclick: () => navigate('account') }, 'ACCOUNT'), h('button', { class: 'header-action', type: 'button', onclick: logout }, 'LOG OUT')] : null;
     return h('header', { class: 'topbar' },
-      h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus'), h('span', { class: 'brand-count' }, summary)),
+      h('div', { class: 'brand-block' }, h('span', { class: 'brand' }, 'Corpus')),
       nav,
       actions
     );
