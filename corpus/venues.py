@@ -277,11 +277,11 @@ def gather(paper, settings, fetch: Fetch | None = None):
 
 
 def decide(candidates, preprint_year=None):
-    """Pick the best-supported venue and whether it is safe to apply unasked.
+    """Pick the best-supported venue; whatever is found is applied.
 
-    Applied: no other non-workshop venue disagrees, it is not a workshop, and it
-    is backed by a curated record (a Crossref DOI or a DBLP entry) or by two
-    independent sources. Everything else becomes a proposal."""
+    The venue with the most independent, curated support wins. A year that
+    predates the preprint is not trusted and is left unchanged. The owner's own
+    edits and earlier "not this" answers are still respected by check()."""
     groups = {}
     for c in candidates:
         groups.setdefault(c.key, []).append(c)
@@ -300,15 +300,9 @@ def decide(candidates, preprint_year=None):
     doi = next((c.doi for c in items if c.doi), None)
     chosen = Candidate(best.source, best.venue, key, best.venue_class, year, bool(sure), doi,
                        next((c.url for c in items if c.doi), best.url), best.workshop, any(c.strong for c in items))
-    # Free-text names from a single weak source vary too much ("Phys. Rev. Lett.")
-    # to veto a curated record; a known venue or a curated record does.
-    rivals = [k for k, group in groups.items() if k != key and not all(c.workshop for c in group)
-              and (any(c.strong for c in group) or known_venue(group[0].venue) or not chosen.strong)]
-    sources_used = sorted({c.source for c in items})
-    plausible_year = year is not None and (preprint_year is None or year >= preprint_year - 1)
-    auto = (not chosen.workshop and not rivals and plausible_year
-            and (chosen.strong or len(sources_used) >= 2))
-    return chosen, auto, sources_used
+    if year is not None and preprint_year is not None and year < preprint_year - 1:
+        chosen.year = None
+    return chosen, True, sorted({c.source for c in items})
 
 
 SOURCE_NAMES = {'crossref': 'Crossref', 'dblp': 'DBLP', 'openalex': 'OpenAlex', 'semanticscholar': 'Semantic Scholar'}
