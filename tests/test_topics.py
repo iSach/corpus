@@ -63,10 +63,10 @@ def test_invalid_topics_do_not_change_the_library(tmp_path, changes):
 def test_topic_icon_is_kept_when_a_save_omits_it(tmp_path):
     settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False)
     with TestClient(create_app(settings)) as client:
-        assert client.post('/api/topics', json={'id':'optics','label':'Optics','symbol':'ring','color':'orange'}).status_code == 200
+        assert client.post('/api/topics', json={'id':'optics','label':'Optics','symbol':'ring','color':'yellow'}).status_code == 200
         assert client.post('/api/topics', json={'id':'optics','label':'Optics, renamed'}).status_code == 200
         saved = next(t for t in client.get('/api/topics').json()['topics'] if t['id'] == 'optics')
-        assert (saved['label'], saved['symbol'], saved['color']) == ('Optics, renamed', 'ring', 'orange')
+        assert (saved['label'], saved['symbol'], saved['color']) == ('Optics, renamed', 'ring', 'yellow')
 
 
 def test_color_migration_keeps_the_color_each_shape_used_to_have(tmp_path):

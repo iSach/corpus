@@ -36,7 +36,7 @@
   const SYMBOL_NAMES = { 'triangle-down': 'Down triangle', x: 'X' };
   const symbolName = symbol => SYMBOL_NAMES[symbol] || symbol[0].toUpperCase() + symbol.slice(1);
   // Matches corpus/topics.py COLORS; values live in app.css per theme.
-  const TOPIC_COLORS = ['vermillion', 'orange', 'yellow', 'green', 'sky', 'blue', 'purple', 'gray'];
+  const TOPIC_COLORS = ['vermillion', 'yellow', 'green', 'sky', 'blue', 'purple'];
 
   function projectSymbol(symbol, color) {
     if (!SYMBOL_PATHS[symbol]) return null;

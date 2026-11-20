@@ -5,8 +5,8 @@ import re
 
 SYMBOLS = {'', 'triangle', 'circle', 'square', 'diamond', 'star', 'cross', 'hexagon', 'pentagon',
            'triangle-down', 'x', 'ring', 'hourglass', 'moon', 'heart', 'bolt', 'drop'}
-# Okabe-Ito colors plus gray, chosen to stay apart with color blindness; see static/app.css.
-COLORS = {'', 'vermillion', 'orange', 'yellow', 'green', 'sky', 'blue', 'purple', 'gray'}
+# Okabe-Ito colors (minus orange and black), chosen to stay apart with color blindness; see static/app.css.
+COLORS = {'', 'vermillion', 'yellow', 'green', 'sky', 'blue', 'purple'}
 
 
 def list_topics(db):
