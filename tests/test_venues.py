@@ -109,31 +109,24 @@ def test_journal_doi_is_confirmed_through_crossref(client):
     assert (p["venue"], p["year"], p["venue_class"], p["doi"]) == ("Physical Review Letters", 2021, "journal", "10.1103/physrevlett.127.000001")
 
 
-def test_single_uncurated_source_becomes_a_proposal_the_owner_applies(client):
+def test_single_uncurated_source_is_applied_too(client):
     c, settings = client
     pid = add(c)
     location = {"source": {"display_name": "neural information processing systems", "type": "conference"}, "landing_page_url": "https://proceedings.neurips.cc/paper/2022/hash/abc"}
-    assert run(settings, pid, openalex(location)).status == "proposed"
+    assert run(settings, pid, openalex(location)).status == "applied"
     p = paper(c, pid)
-    assert p["venue_class"] == "preprint"
-    proposal = p["venue_proposal"]
-    assert (proposal["venue"], proposal["year"], proposal["sources"]) == ("Advances in Neural Information Processing Systems (NeurIPS)", 2022, ["OpenAlex"])
-    listed = c.get("/api/papers", params={"q": "is:venue-proposed"}).json()
-    assert [x["id"] for x in listed["papers"]] == [pid]
-
-    applied = c.post(f"/api/venue-proposals/{proposal['id']}", json={"action": "apply"}).json()["paper"]
-    assert (applied["venue_class"], applied["year"], applied["venue_source"]) == ("conference", 2022, "manual")
-    assert applied["venue_proposal"] is None
+    assert (p["venue"], p["venue_class"], p["year"], p["venue_source"]) == ("Advances in Neural Information Processing Systems (NeurIPS)", "conference", 2022, "auto:openalex")
+    assert p["venue_proposal"] is None
     assert c.get("/api/papers", params={"q": "is:venue-proposed"}).json()["total"] == 0
-    assert c.post(f"/api/venue-proposals/{proposal['id']}", json={"action": "apply"}).status_code == 409
 
 
-def test_disagreeing_curated_sources_need_the_owner(client):
+def test_disagreeing_sources_apply_the_best_supported_venue(client):
     c, settings = client
     pid = add(c)
     location = {"source": {"display_name": "Physical Review Letters", "type": "journal"}, "landing_page_url": "https://doi.org/10.1103/x"}
     result = run(settings, pid, {**openalex(location), **crossref(), **s2(venue="ICML", dblp="conf/icml/Lovelace21")})
-    assert result.status == "proposed"
+    assert result.status == "applied"
+    assert paper(c, pid)["venue_class"] != "preprint"
 
 
 def test_owner_edits_are_never_overridden(client):
