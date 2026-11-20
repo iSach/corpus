@@ -140,6 +140,8 @@ class Pacer:
     def __init__(self, path, interval, daily_limit):
         self.path, self.interval, self.daily_limit = Path(path), interval, daily_limit
         self.lock = threading.Lock()
+        # Held for a whole claim-and-review, so libraries sharing this pacer never call Claude at once.
+        self.turn = threading.Lock()
         self.state = {'paused_until': 0.0, 'reason': '', 'failures': 0, 'last_call': 0.0, 'day': '', 'calls': 0}
         try:
             stored = json.loads(self.path.read_text())
@@ -223,8 +225,11 @@ def pacer(settings):
     path = settings.ai_state_file
     with _pacers_lock:
         found = _pacers.get(path)
-        if not found or (found.interval, found.daily_limit) != (settings.ai_min_interval, settings.ai_daily_limit):
+        if not found:
             found = _pacers[path] = Pacer(path, settings.ai_min_interval, settings.ai_daily_limit)
+        # Pacing changed on the admin page applies to the one shared pacer, so a
+        # usage-limit pause it holds is never lost to a second copy.
+        found.interval, found.daily_limit = settings.ai_min_interval, settings.ai_daily_limit
         return found
 
 
@@ -284,15 +289,18 @@ def prompt(db, ctx, paper_id):
 
 def validate(result, ctx, others):
     """Check Claude's output against what it was asked; never trust its shape."""
+    # Over-long text and lists are trimmed rather than rejected: a failed
+    # review is retried, and every retry spends another full Claude call.
     def text(value, maximum, name):
-        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        if not isinstance(value, str) or not value.strip():
             raise ReviewError('Claude returned an invalid ' + name)
-        return value.strip()
+        value = value.strip()
+        return value if len(value) <= maximum else value[:maximum - 1].rstrip() + '…'
 
     def texts(values, count, maximum, name):
-        if not isinstance(values, list) or len(values) > count:
+        if not isinstance(values, list):
             raise ReviewError('Claude returned invalid ' + name)
-        return [text(v, maximum, name) for v in values]
+        return [text(v, maximum, name) for v in values[:count]]
 
     def score(value, name):
         if value is not None and (type(value) is not int or not 0 <= value <= 10):
@@ -642,20 +650,38 @@ def _assess(db, job, ctx, result):
         return None
 
 
-async def worker(settings, stop):
+def run_next(settings):
+    """Claim and review one paper if the shared pacer allows a call now.
+
+    Returns (ran, wait): whether a review ran, and seconds until the pacer
+    allows the next call (0 when it already does, or another library's review
+    holds the turn)."""
     pace = pacer(settings)
+    if not pace.turn.acquire(blocking=False):
+        return False, 0.0
+    try:
+        wait = pace.wait()
+        if wait > 0:
+            return False, wait
+        job = claim(settings)
+        if not job:
+            return False, 0.0
+        pace.started()
+        process(settings, job)
+        return True, 0.0
+    finally:
+        pace.turn.release()
+
+
+async def worker(settings, stop):
     while not stop.is_set():
         delay = settings.ai_poll_interval
         if enabled(settings):
-            wait = pace.wait()
-            if wait <= 0:
-                job = await asyncio.to_thread(claim, settings)
-                if job:
-                    pace.started()
-                    await asyncio.to_thread(process, settings, job)
-                    continue
-            else:
-                delay = min(wait, settings.ai_poll_interval)
+            ran, wait = await asyncio.to_thread(run_next, settings)
+            if ran:
+                continue
+            if wait:
+                delay = min(wait, delay)
         try:
             await asyncio.wait_for(stop.wait(), timeout=delay)
         except asyncio.TimeoutError:

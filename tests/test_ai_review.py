@@ -337,3 +337,39 @@ def test_retry_queues_a_failed_or_refreshed_review(library, monkeypatch):
     assert ai_review.claim(settings) is None
     assert client.post('/api/review/ai', json={'id': pid}).json() == {'status': 'queued'}
     assert ai_review.claim(settings)['paper_id'] == pid
+
+
+def test_changing_pacing_keeps_the_shared_pause(library, monkeypatch):
+    client, settings, pid = ready(library)
+    pace = ai_review.pacer(settings)
+    pace.pause(time.time() + 3600, 'Claude usage limit reached')
+    # The admin page changes pacing while a usage-limit pause is running.
+    settings.ai_min_interval, settings.ai_daily_limit = 60, 5
+    assert ai_review.pacer(settings) is pace and (pace.interval, pace.daily_limit) == (60, 5)
+    called = returns(monkeypatch, ai_result())
+    ran, wait = ai_review.run_next(settings)
+    assert not ran and wait > 3500 and not called
+
+
+def test_one_review_at_a_time_across_libraries(library, monkeypatch):
+    client, settings, pid = ready(library)
+    called = returns(monkeypatch, ai_result())
+    pace = ai_review.pacer(settings)
+    with pace.turn:   # another library's review is running
+        assert ai_review.run_next(settings) == (False, 0.0)
+    assert not called
+    assert ai_review.run_next(settings) == (True, 0.0)
+    assert len(called) == 1
+
+
+def test_overlong_answers_are_trimmed_not_rejected(library, monkeypatch):
+    client, settings, pid = ready(library)
+    result = ai_result()
+    result['digest']['contributions'] = ['A new benchmark.'] * 12
+    result['topics'][0]['questions'] = ['Does it transfer?'] * 9
+    result['topics'][0]['explanation'] = 'x' * 5000
+    returns(monkeypatch, result)
+    assert review_once(settings)[1] == 'complete'
+    review = paper(client, pid)['review']['claude']['result']
+    assert len(review['digest']['contributions']) == 8 and len(review['topics'][0]['questions']) == 5
+    assert len(review['topics'][0]['explanation']) == 3000 and review['topics'][0]['explanation'].endswith('…')
