@@ -82,7 +82,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   letter-spacing: -.01em;
 }
 .brand-count { color: var(--soft); font: 10px/1 var(--mono); letter-spacing: .08em; }
-.screen-nav { display: flex; align-items: stretch; font: 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.screen-nav { display: flex; align-items: stretch; margin-right: auto; font: 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .screen-nav a {
   display: flex;
   align-items: center;
@@ -93,17 +93,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .screen-nav a:hover { background: rgba(182,130,53,.12); }
 .screen-nav a[aria-current="page"] { color: var(--ink); background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); }
-.ingest-summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  padding: 0 12px;
-  border-left: 1px solid var(--line);
-  color: var(--soft);
-  font: 10.5px/1.2 var(--mono);
-  white-space: nowrap;
-}
 .header-action { border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); font: 10px var(--mono); padding: 0 9px; }
 .header-action:hover { background: rgba(182,130,53,.12); }
 
@@ -602,7 +591,6 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   .inbox-shortcuts { display: none; }
   .topbar { flex-wrap: wrap; }
   .brand-block { flex: 1; }
-  .ingest-summary { order: 3; width: 100%; min-height: 23px; border-top: 1px solid var(--line); border-left: 0; }
   .library-layout, .library-layout.no-facets, .library-layout.no-detail, .library-layout.no-facets.no-detail { grid-template-columns: minmax(0, 1fr); }
   .facet-rail { display: none; }
   .library-layout .detail-pane { display: none; }
