@@ -265,7 +265,7 @@ print(os.environ['FAKE_CLAUDE_OUTPUT'])
 def test_cli_backend_runs_claude_without_tools_or_settings(tmp_path, fake_claude):
     from corpus.config import Settings
     script, respond = fake_claude
-    settings = Settings(data_dir=tmp_path, anthropic_api_key='', claude_oauth_token='sk-ant-oat-test', claude_bin=str(script))
+    settings = Settings(data_dir=tmp_path, anthropic_api_key='', claude_oauth_token='sk-ant-oat-test', claude_bin=str(script), ai_effort='medium')
     called = respond({'type': 'result', 'subtype': 'success', 'is_error': False, 'structured_output': ai_result(),
                       'total_cost_usd': 0.05, 'usage': {'input_tokens': 10, 'cache_read_input_tokens': 1500, 'output_tokens': 400}})
     output, spent = ai_review.generate(settings, '{"paper": {}}')
@@ -274,6 +274,7 @@ def test_cli_backend_runs_claude_without_tools_or_settings(tmp_path, fake_claude
     argv = call['argv']
     assert argv[argv.index('--tools') + 1] == '' and argv[argv.index('--setting-sources') + 1] == ''
     assert argv[argv.index('--model') + 1] == 'claude-opus-5-5' and '--no-session-persistence' in argv
+    assert argv[argv.index('--effort') + 1] == 'medium'
     assert json.loads(argv[argv.index('--json-schema') + 1]) == ai_review.SCHEMA
     assert call['stdin'] == '{"paper": {}}'
     assert call['env'] == {'HOME': str(tmp_path / 'claude-home'), 'CLAUDE_CODE_OAUTH_TOKEN': 'sk-ant-oat-test', 'ANTHROPIC_API_KEY': None}
@@ -321,11 +322,11 @@ def test_api_backend_request(tmp_path, monkeypatch):
             assert options['api_key'] == 'key'
             self.beta = SimpleNamespace(messages=Messages())
     monkeypatch.setattr(anthropic, 'Anthropic', Client)
-    output, spent = ai_review.generate(Settings(data_dir=tmp_path, anthropic_api_key='key'), '{"paper": {}}')
+    output, spent = ai_review.generate(Settings(data_dir=tmp_path, anthropic_api_key='key', ai_effort='low'), '{"paper": {}}')
     assert output == ai_result()
     assert spent == {'input_tokens': 1000, 'output_tokens': 500, 'cost_usd': (1000 * 4 + 500 * 20) / 1e6}
     assert sent['model'] == 'claude-opus-5-5' and 'tool_choice' not in sent
-    assert sent['output_config'] == {'effort': 'high', 'format': {'type': 'json_schema', 'schema': ai_review.SCHEMA}}
+    assert sent['output_config'] == {'effort': 'low', 'format': {'type': 'json_schema', 'schema': ai_review.SCHEMA}}
     assert sent['fallbacks'] == 'default' and sent['betas'] == ['server-side-fallback-2026-07-01']
     assert sent['system'][0]['cache_control'] == {'type': 'ephemeral'}
 
@@ -373,3 +374,22 @@ def test_overlong_answers_are_trimmed_not_rejected(library, monkeypatch):
     review = paper(client, pid)['review']['claude']['result']
     assert len(review['digest']['contributions']) == 8 and len(review['topics'][0]['questions']) == 5
     assert len(review['topics'][0]['explanation']) == 3000 and review['topics'][0]['explanation'].endswith('…')
+
+
+def test_status_detail_reports_daily_usage_and_latest_reviews(library, monkeypatch):
+    client, settings, pid = ready(library)
+    returns(monkeypatch, ai_result(), {'input_tokens': 62000, 'output_tokens': 3000, 'cost_usd': 0.15})
+    assert review_once(settings)[1] == 'complete'
+    plain = client.get('/api/ai').json()
+    assert plain['effort'] == 'high' and 'days' not in plain and 'recent' not in plain
+    detail = client.get('/api/ai', params={'detail': 'true'}).json()
+    assert len(detail['days']) == 1
+    assert detail['days'][0] | {'day': None} == {'day': None, 'reviews': 1, 'full_text': 0, 'input_tokens': 62000, 'output_tokens': 3000, 'cost_usd': 0.15}
+    [job] = detail['recent']
+    assert job['paper_id'] == pid and job['title'] and job['status'] == 'complete' and job['input_tokens'] == 62000 and job['error'] == ''
+
+
+def test_effort_must_be_a_known_level(tmp_path):
+    from corpus.config import Settings
+    with pytest.raises(ValueError):
+        Settings(data_dir=tmp_path, ai_effort='extreme')

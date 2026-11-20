@@ -447,7 +447,9 @@ def test_service_keys_are_write_only_and_override_the_environment(site, monkeypa
     assert settings.claude_oauth_token == secret and settings.ai_daily_limit == 5 and settings.s2_api_key == 's2-key-12345'
     path = settings.data_dir / 'service-config.json'
     assert path.stat().st_mode & 0o777 == 0o600
-    for bad in ({'ai_model': 'gpt-5'}, {'claude_bin': '/tmp/x'}, {'ai_daily_limit': -1}, {'anthropic_api_key': 'has space inside'}):
+    assert admin.put('/api/admin/services', json={'ai_effort': 'low'}).json()['settings']['ai_effort']['value'] == 'low'
+    assert settings.ai_effort == 'low'
+    for bad in ({'ai_effort': 'extreme'}, {'ai_model': 'gpt-5'}, {'claude_bin': '/tmp/x'}, {'ai_daily_limit': -1}, {'anthropic_api_key': 'has space inside'}):
         assert admin.put('/api/admin/services', json=bad).status_code == 400
     assert admin.put('/api/admin/services', json={'claude_oauth_token': None}).json()['settings']['claude_oauth_token']['set'] is False
     assert settings.claude_oauth_token == '' and settings.ai_daily_limit == 5

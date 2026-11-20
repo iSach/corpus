@@ -390,7 +390,7 @@ def run_cli(settings, user_prompt, now=None):
         # An isolated home: the subscription token is the only credential used.
         env.update(HOME=str(home), CLAUDE_CODE_OAUTH_TOKEN=settings.claude_oauth_token)
     env.update(DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
-    command = [settings.claude_bin, '-p', '--model', settings.ai_model, '--effort', 'high', '--output-format', 'json',
+    command = [settings.claude_bin, '-p', '--model', settings.ai_model, '--effort', settings.ai_effort, '--output-format', 'json',
                '--json-schema', json.dumps(SCHEMA), '--tools', '', '--setting-sources', '', '--no-session-persistence',
                '--system-prompt', SYSTEM]
     try:
@@ -436,7 +436,7 @@ def run_api(settings, user_prompt):
     params = dict(model=settings.ai_model, max_tokens=16000,
                   system=[{'type': 'text', 'text': SYSTEM, 'cache_control': {'type': 'ephemeral'}}],
                   messages=[{'role': 'user', 'content': user_prompt}],
-                  output_config={'effort': 'high', 'format': {'type': 'json_schema', 'schema': SCHEMA}})
+                  output_config={'effort': settings.ai_effort, 'format': {'type': 'json_schema', 'schema': SCHEMA}})
     try:
         if settings.ai_model in FALLBACK_MODELS:
             # A paper that trips a safety classifier is retried on a fallback model.
@@ -701,7 +701,7 @@ def latest_review(db, paper_id):
     return review
 
 
-def status(settings, db):
+def status(settings, db, detail=False):
     kind = backend(settings)
     queue = {'inbox': 0, 'update': 0, 'library': 0}
     if kind:
@@ -710,16 +710,28 @@ def status(settings, db):
     month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
     usage = db.execute("SELECT count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(cost_usd),0) FROM ai_review_jobs WHERE status='complete' AND updated>=?", (month,)).fetchone()
     failed = db.execute("SELECT count(*) FROM ai_review_jobs WHERE status='failed' AND attempts>=3").fetchone()[0]
-    return {'enabled': bool(kind), 'backend': kind, 'model': settings.ai_model, 'backfill': backfill(db), 'queue': queue,
-            'failed': failed, 'pacing': pacer(settings).snapshot() if kind else None,
-            'month': {'reviews': usage[0], 'input_tokens': usage[1], 'output_tokens': usage[2], 'cost_usd': round(usage[3], 2)}}
+    result = {'enabled': bool(kind), 'backend': kind, 'model': settings.ai_model, 'effort': settings.ai_effort, 'backfill': backfill(db), 'queue': queue,
+              'failed': failed, 'pacing': pacer(settings).snapshot() if kind else None,
+              'month': {'reviews': usage[0], 'input_tokens': usage[1], 'output_tokens': usage[2], 'cost_usd': round(usage[3], 2)}}
+    if detail:
+        # Per-day totals for the last two weeks and the latest reviews, for the Claude page.
+        since = time.time() - 14 * 86400
+        result['days'] = [dict(row) for row in db.execute(
+            "SELECT date(updated,'unixepoch','localtime') AS day, count(*) AS reviews, sum(evidence='full_text') AS full_text, "
+            "coalesce(sum(input_tokens),0) AS input_tokens, coalesce(sum(output_tokens),0) AS output_tokens, round(coalesce(sum(cost_usd),0),2) AS cost_usd "
+            "FROM ai_review_jobs WHERE status='complete' AND updated>=? GROUP BY day ORDER BY day DESC", (since,))]
+        result['recent'] = [dict(row) for row in db.execute(
+            "SELECT j.paper_id, p.title, j.evidence, j.model, j.status, j.updated, j.input_tokens, j.output_tokens, round(j.cost_usd,3) AS cost_usd, "
+            "CASE WHEN j.status='failed' THEN j.error ELSE '' END AS error "
+            "FROM ai_review_jobs j LEFT JOIN papers p ON p.id=j.paper_id WHERE j.status IN ('complete','failed','running') ORDER BY j.updated DESC LIMIT 25")]
+    return result
 
 
 def install_routes(app, settings):
     @app.get('/api/ai')
-    def ai_status():
+    def ai_status(detail: bool = False):
         with connection(settings, True) as db:
-            return status(settings, db)
+            return status(settings, db, detail)
 
     @app.post('/api/ai')
     def ai_update(body: dict):

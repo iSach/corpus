@@ -12,8 +12,10 @@ import tempfile
 import threading
 from pathlib import Path
 
+from .config import EFFORTS
+
 SECRETS = ('claude_oauth_token', 'anthropic_api_key', 's2_api_key', 'openalex_api_key')
-OPTIONS = ('ai_backend', 'ai_model', 'ai_min_interval', 'ai_daily_limit')
+OPTIONS = ('ai_backend', 'ai_model', 'ai_effort', 'ai_min_interval', 'ai_daily_limit')
 KEYS = SECRETS + OPTIONS
 
 
@@ -33,6 +35,10 @@ def clean(key, value):
         if not isinstance(value, str) or not re.fullmatch(r'claude-[a-z0-9][a-z0-9.-]{1,80}', value.strip()):
             raise ValueError('Enter a Claude model ID, such as claude-opus-5-5')
         return value.strip()
+    if key == 'ai_effort':
+        if value not in EFFORTS:
+            raise ValueError('Choose low, medium, high, xhigh or max')
+        return value
     if key == 'ai_min_interval':
         if type(value) not in (int, float) or not 0 <= value <= 86400:
             raise ValueError('Seconds between reviews must be 0–86,400')
