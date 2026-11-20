@@ -300,7 +300,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .inbox-paper-header .detail-id { overflow-wrap: anywhere; }
 .inbox-paper-title { margin: 4px 0; font: 600 22px/1.15 var(--display); overflow-wrap: anywhere; }
 .inbox-paper-header .artifact-list { margin-top: 6px; }
-.inbox-mobile-back { display: none; }
+.inbox-mobile-bar { display: none; }
+.inbox-scroll { display: contents; }
 .inbox-reading { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .inbox-actionbar { flex: none; padding: 7px 10px; border-top: 1px solid var(--ink); background: var(--surface); }
 .inbox-decision-actions { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -624,12 +625,35 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   .inbox-queue { display: none; }
   .mobile-list .inbox-queue { display: flex; }
   .mobile-list .inbox-detail { display: none; }
-  .inbox-mobile-back { display: block; margin: -3px 0 5px -5px; font-size: 10px; }
+  .inbox-tabs { overflow-x: auto; scrollbar-width: none; }
+  .inbox-tab { flex: none; min-height: 36px; padding: 0 12px; }
+  .inbox-query-toolbar .toolbar-button { min-height: 36px; }
+  .inbox-item { padding: 10px 12px; }
+  .inbox-item-title { font-size: 15px; }
+  .inbox-item-meta { font-size: 10.5px; }
+  .inbox-list-head .inbox-item-scores { font-size: 8px; letter-spacing: 0; }
+  .inbox-pagination .btn { min-width: 44px; min-height: 36px; font-size: 14px; }
+  /* Reading a paper: the app header, search and tabs give way to the paper,
+     which scrolls as one page above a thumb-sized decision bar. */
+  .app-shell:has(.inbox-screen.mobile-reading) .topbar,
+  .mobile-reading .inbox-query-toolbar, .mobile-reading .inbox-tabs { display: none; }
+  .inbox-mobile-bar { display: flex; flex: none; align-items: center; gap: 2px; padding: 0 4px; padding-top: env(safe-area-inset-top); border-bottom: 1px solid var(--ink); background: var(--surface); }
+  .inbox-mobile-bar .btn { min-width: 44px; min-height: 44px; padding: 0 10px; font-size: 18px; }
+  .inbox-mobile-bar .inbox-mobile-back { margin-right: auto; font-size: 11px; letter-spacing: .06em; }
+  .inbox-mobile-position { color: var(--soft); font: 11px var(--mono); padding: 0 6px; }
+  .inbox-scroll { display: block; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .inbox-reading { overflow: visible; }
+  .inbox-paper-header { padding-top: 10px; }
   .inbox-paper-header .detail-id { font-size: 9px; }
-  .inbox-paper-title { font-size: 22px; }
-  .inbox-actionbar { padding-bottom: max(7px,env(safe-area-inset-bottom)); }
-  .inbox-actionbar .btn { min-height: 28px; padding-left: 7px; padding-right: 7px; font-size: 10px; }
-  .inbox-tab { padding: 0 8px; }
+  .inbox-paper-title { font-size: 21px; }
+  .inbox-paper-header .artifact-link { min-height: 32px; display: inline-flex; align-items: center; }
+  .inbox-abstract, .inbox-reason { font-size: 14px; }
+  .inbox-actionbar { padding: 8px; padding-bottom: max(8px,env(safe-area-inset-bottom)); }
+  .inbox-decision-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+  .inbox-decision-actions .btn { min-height: 48px; padding: 4px 6px; font-size: 11px; line-height: 1.25; white-space: normal; }
+  .inbox-decision-actions .inbox-dismiss { order: -2; }
+  .inbox-decision-actions .inbox-approve { order: 1; }
+  .inbox-actionbar .inbox-action-hint { display: none; }
 }
 @media (max-width: 560px) {
   .screen-nav a { padding: 0 7px; font-size: 10px; }
