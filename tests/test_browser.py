@@ -76,7 +76,7 @@ def test_triage_save_and_export(page,site):
     expect(page.locator('.detail-title')).to_have_text('Beta local diffusion')
     page.get_by_role('button',name='EDIT',exact=True).click()
     expect(page.locator('.entry-form')).to_be_visible()
-    page.get_by_role('button',name='ACCEPT DRAFT SCORES',exact=True).click()
+    page.get_by_role('button',name='USE THESE SCORES',exact=True).click()
     page.locator('#form-notes').fill('Triaged in browser')
     page.get_by_role('button',name='SAVE & NEXT UNREVIEWED',exact=False).click()
     expect(page.locator('[data-focus-key="form-title"]')).to_have_value('Gamma neural inference')

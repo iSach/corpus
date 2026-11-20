@@ -72,8 +72,9 @@ def test_inbox_paper_gets_digest_assessment_and_draft_scores(library, monkeypatc
     assert current['assessor'] == 'ai:' + settings.ai_model + ':' + ai_review.PROMPT_VERSION
     assert current['priority'] == 'high' and current['stage'] == 'abstract'
     assert after['proposed_rel'] == 8 and after['proposed_cred'] is None
-    assert after['proposed_reason'].startswith('Claude draft · ' + settings.ai_model + ' · abstract only')
-    assert after['rel'] is None and after['admission'] == 'pending'
+    assert after['proposed_reason'].startswith('Claude · ' + settings.ai_model + ' · abstract only')
+    # Claude's scores are the paper's scores straight away; quality waits for the full text.
+    assert after['rel'] == 8 and after['cred'] is None and after['admission'] == 'pending'
     assert ai_review.claim(settings) is None
     with connection(settings) as db:
         row = db.execute('SELECT status,input_tokens,cost_usd,backend FROM ai_review_jobs').fetchone()
@@ -181,7 +182,8 @@ def test_library_backfill_reads_full_text_and_keeps_verified_quotes(library, mon
     assert current['stage'] == 'full_text' and current['evidence'] == evidence[:1]
     assert after['review']['check']['status'] == 'checked'
     assert after['proposed_qual'] == 7 and 'full text' in after['proposed_reason']
-    assert (after['state'], after['rel'], after['admission']) == (before['state'], before['rel'], 'approved')
+    assert (after['state'], after['admission']) == (before['state'], 'approved')
+    assert (after['rel'], after['cred'], after['qual'], after['reimpl']) == (8, 6, 7, 5)
 
 
 def test_full_text_arrival_queues_a_deeper_review(library, monkeypatch):
@@ -393,3 +395,32 @@ def test_effort_must_be_a_known_level(tmp_path):
     from corpus.config import Settings
     with pytest.raises(ValueError):
         Settings(data_dir=tmp_path, ai_effort='extreme')
+
+
+def test_rereview_updates_claude_scores_but_keeps_scores_set_by_hand(library, monkeypatch):
+    client, settings, pid = ready(library)
+    def review(relevance, abstract):
+        with connection(settings) as db:
+            db.execute('UPDATE papers SET abstract=? WHERE id=?', (abstract, pid))
+        returns(monkeypatch, ai_result() | {'topics': [{**ai_result()['topics'][0], 'relevance': relevance}]})
+        assert review_once(settings)[1] == 'complete'
+        return paper(client, pid)
+    assert review(8, 'First text')['rel'] == 8
+    assert review(4, 'Second text')['rel'] == 4  # still Claude's: follows the new review
+    with connection(settings) as db:
+        db.execute('UPDATE papers SET rel=3 WHERE id=?', (pid,))  # set by hand
+    after = review(6, 'Third text')
+    assert after['rel'] == 3 and after['proposed_rel'] == 6
+
+
+def test_migration_turns_existing_claude_drafts_into_scores(library):
+    from corpus.db import ROOT
+    client, settings, pid = ready(library)
+    with connection(settings) as db:
+        db.execute("UPDATE papers SET proposed_rel=7,proposed_cred=6,proposed_qual=NULL,proposed_reimpl=4,rel=NULL,cred=3,qual=NULL,reimpl=NULL,"
+                   "proposed_reason='Claude draft · claude-sonnet-5-5 · full text. cred: ok' WHERE id=?", (pid,))
+        sql = (ROOT / 'migrations' / '016_claude_scores.sql').read_text().replace('INSERT INTO schema_migrations(version) VALUES(16);', '')
+        db.executescript(sql)
+    after = paper(client, pid)
+    assert (after['rel'], after['cred'], after['qual'], after['reimpl']) == (7, 3, None, 4)
+    assert after['proposed_reason'] == 'Claude · claude-sonnet-5-5 · full text. cred: ok'

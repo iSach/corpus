@@ -32,6 +32,7 @@ PROMPT_VERSION = 'review-v2'
 FULL_TEXT_CHARS = 80_000
 KINDS = ('method', 'benchmark', 'dataset', 'theory', 'empirical-study', 'survey', 'application', 'position', 'other')
 QUALITY = ('cred', 'qual', 'reimpl')
+SCORES = ('rel', *QUALITY)
 # Assessments Claude may replace: nobody has judged the paper yet, a retired
 # keyword match, or an earlier Claude review.
 REPLACEABLE = ('not-assessed', 'automatic-topic-match-v1')
@@ -594,9 +595,13 @@ def save(settings, job, ctx, result, spent):
         primary = next((t for t in result['topics'] if t['topic'] == paper['field']), result['topics'][0])
         label = 'full text' if ctx['evidence'] == 'full_text' else 'abstract only'
         reasons = ' '.join(f'{k}: {result["score_reasons"][k]}' for k in QUALITY)
-        db.execute('UPDATE papers SET proposed_rel=?,proposed_cred=?,proposed_qual=?,proposed_reimpl=?,proposed_reason=? WHERE id=?',
-                   (primary['relevance'], *[result['scores'][k] for k in QUALITY],
-                    f'Claude draft · {job["model"]} · {label}. {reasons}', job['paper_id']))
+        # Claude's numbers are the paper's scores. A later review updates a score that still
+        # holds Claude's previous value; one changed by hand is kept.
+        new = dict(zip(SCORES, (primary['relevance'], *[result['scores'][k] for k in QUALITY])))
+        old = db.execute('SELECT ' + ','.join(SCORES) + ',' + ','.join('proposed_' + s for s in SCORES) + ' FROM papers WHERE id=?', (job['paper_id'],)).fetchone()
+        scores = {s: new[s] if new[s] is not None and (old[s] is None or old[s] == old['proposed_' + s]) else old[s] for s in SCORES}
+        db.execute('UPDATE papers SET ' + ','.join(f'{s}=?,proposed_{s}=?' for s in SCORES) + ',proposed_reason=? WHERE id=?',
+                   (*[v for s in SCORES for v in (scores[s], new[s])], f'Claude · {job["model"]} · {label}. {reasons}', job['paper_id']))
         db.execute("UPDATE ai_review_jobs SET status='complete',assessment_id=?,result=?,input_tokens=?,output_tokens=?,cost_usd=?,updated=? WHERE id=?",
                    (assessment, json.dumps(result, ensure_ascii=False), spent['input_tokens'], spent['output_tokens'], spent['cost_usd'], time.time(), job['id']))
     return 'complete'
