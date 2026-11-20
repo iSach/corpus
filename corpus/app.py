@@ -184,7 +184,7 @@ def create_app(settings=None):
     async def database_error(request,e): return JSONResponse({'detail':str(e)},status_code=400)
     @app.get('/api/config')
     def config(request:Request):
-        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')] if authenticated(request) else []
+        with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol,color FROM fields ORDER BY rowid')] if authenticated(request) else []
         return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model} if authenticated(request) or settings.dev else None}
     @app.get('/api/topics')
     def topics():

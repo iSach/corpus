@@ -16,32 +16,44 @@
   const VIEW_NAMES = ['ROWS', 'BARS', 'LEDGER'];
   const VIEW_NOTES = ['numeric scores', 'score bars', 'ledger · zebra rows'];
   const ARTIFACT_KINDS = ['pdf', 'code', 'data', 'slides', 'video', 'other'];
-  const PROJECT_SYMBOLS = { triangle: '▲', circle: '●', square: '■', diamond: '◆', star: '★', cross: '✚', hexagon: '⬢', pentagon: '⬟' };
+  // A shared viewbox and explicit geometry keep icons independent of font metrics.
+  const SYMBOL_PATHS = {
+    triangle: 'M12 3 22 21H2Z', circle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
+    square: 'M4 4h16v16H4Z', diamond: 'M12 1 23 12 12 23 1 12Z',
+    star: 'm12 1 3.4 7 7.6 1.1-5.5 5.4 1.3 7.5-6.8-3.6L5.2 22l1.3-7.5L1 9.1 8.6 8Z',
+    cross: 'M8 2h8v6h6v8h-6v6H8v-6H2V8h6Z',
+    hexagon: 'M6.5 2.5h11L23 12l-5.5 9.5h-11L1 12Z',
+    pentagon: 'M12 1 23 9l-4.2 13H5.2L1 9Z',
+    'triangle-down': 'M2 3h20L12 21Z',
+    x: 'M5.6 1.4 12 7.8l6.4-6.4 4.2 4.2-6.4 6.4 6.4 6.4-4.2 4.2-6.4-6.4-6.4 6.4-4.2-4.2 6.4-6.4-6.4-6.4Z',
+    ring: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
+    hourglass: 'M3 2h18l-9 10 9 10H3l9-10Z',
+    moon: 'M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z',
+    heart: 'M12 21.4 10.6 20C5.4 15.4 2 12.3 2 8.5 2 5.4 4.4 3 7.5 3c1.7 0 3.4.8 4.5 2.1C13.1 3.8 14.8 3 16.5 3 19.6 3 22 5.4 22 8.5c0 3.8-3.4 6.9-8.6 11.5Z',
+    bolt: 'M14 1 4 14h7l-2 9 11-13h-7Z',
+    drop: 'M12 1.5S4.5 10 4.5 15a7.5 7.5 0 0 0 15 0C19.5 10 12 1.5 12 1.5Z'
+  };
+  const SYMBOL_NAMES = { 'triangle-down': 'Down triangle', x: 'X' };
+  const symbolName = symbol => SYMBOL_NAMES[symbol] || symbol[0].toUpperCase() + symbol.slice(1);
+  // Matches corpus/topics.py COLORS; values live in app.css per theme.
+  const TOPIC_COLORS = ['vermillion', 'orange', 'yellow', 'green', 'sky', 'blue', 'purple', 'gray'];
 
-  function projectSymbol(symbol) {
-    // A shared viewbox and explicit geometry keep icons independent of font metrics.
-    const paths = {
-      triangle: 'M12 3 22 21H2Z', circle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
-      square: 'M4 4h16v16H4Z', diamond: 'M12 1 23 12 12 23 1 12Z',
-      star: 'm12 1 3.4 7 7.6 1.1-5.5 5.4 1.3 7.5-6.8-3.6L5.2 22l1.3-7.5L1 9.1 8.6 8Z',
-      cross: 'M8 2h8v6h6v8h-6v6H8v-6H2V8h6Z',
-      hexagon: 'M6.5 2.5h11L23 12l-5.5 9.5h-11L1 12Z',
-      pentagon: 'M12 1 23 9l-4.2 13H5.2L1 9Z'
-    };
-    if (!paths[symbol]) return null;
+  function projectSymbol(symbol, color) {
+    if (!SYMBOL_PATHS[symbol]) return null;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', `project-symbol symbol-${symbol}`);
+    svg.setAttribute('class', `project-symbol symbol-${symbol}${TOPIC_COLORS.includes(color) ? ` topic-color-${color}` : ''}`);
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('width', '1em'); svg.setAttribute('height', '1em');
     svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
     const path = document.createElementNS(svg.namespaceURI, 'path');
-    path.setAttribute('d', paths[symbol]); path.setAttribute('fill', 'currentColor');
+    path.setAttribute('d', SYMBOL_PATHS[symbol]); path.setAttribute('fill', 'currentColor'); path.setAttribute('fill-rule', 'evenodd');
     svg.appendChild(path);
     return svg;
   }
+  const topicIcon = topic => topic ? projectSymbol(topic.symbol, topic.color) : null;
   function projectName(id) {
     const field = state.config.fields.find(item => item.id === id);
-    return h('span', { class: 'project-name' }, projectSymbol(field && field.symbol), field ? field.label : id);
+    return h('span', { class: 'project-name' }, topicIcon(field), field ? field.label : id);
   }
 
   const persistedView = (() => {
@@ -123,7 +135,7 @@
   let inboxDetailRequest = 0;
   let inboxTimer = null;
   const capture = window.CorpusCapture({ h, api, render, toast,
-    fields: () => state.config.fields, projectSymbol,
+    fields: () => state.config.fields, topicIcon,
     currentProjects: () => state.facetFilters.field,
     onProjects: projects => { if (state.form && !state.form.id) { state.form.projects = [...projects]; if (!projects.includes(state.form.field)) state.form.field = projects[0] || ''; } },
     onAdded: () => { state.papers = []; state.selectedDetail = null; loadStats(true).then(() => { if (state.stats) state.libraryTotal = state.stats.total; render(); }); },
@@ -442,7 +454,7 @@
     try {
       const data = await api('/api/topics');
       state.topics = data.topics;
-      state.config.fields = data.topics.map(topic => ({ id: topic.id, label: topic.label, symbol: topic.symbol }));
+      state.config.fields = data.topics.map(topic => ({ id: topic.id, label: topic.label, symbol: topic.symbol, color: topic.color }));
     } catch (error) { state.topicsError = getError(error); }
     finally { state.topicsLoading = false; render(); }
   }
@@ -454,7 +466,7 @@
     const topic = state.topicForm;
     render();
     try {
-      await api('/api/topics', { method: 'POST', body: { id: topic.id, label: topic.label, description: topic.description, relevance_criteria: topic.relevance_criteria || '', symbol: topic.symbol || '' } });
+      await api('/api/topics', { method: 'POST', body: { id: topic.id, label: topic.label, description: topic.description, relevance_criteria: topic.relevance_criteria || '', symbol: topic.symbol || '', color: topic.color || '' } });
       state.topicForm = null;
       state.inbox.detail = null; // The open Inbox card shows this topic's brief; reload it on return.
       await loadTopics();
@@ -1685,7 +1697,7 @@
           state.form.projects = event.target.checked ? [...state.form.projects, field.id] : state.form.projects.filter(id => id !== field.id);
           if (!state.form.projects.includes(state.form.field)) state.form.field = state.form.projects[0] || '';
           if (!state.form.id) capture.setProjects(state.form.projects); else render();
-        } }), projectSymbol(field.symbol), field.label)))),
+        } }), topicIcon(field), field.label)))),
       formInput('STATE', 'state', { select: ['unreviewed', 'reviewed', 'archived'] }),
       h('div', { class: 'form-line' }, h('label', { class: 'form-label', for: 'form-starred' }, 'STARRED'), h('input', { id: 'form-starred', 'data-focus-key': 'form-starred', type: 'checkbox', checked: state.form.starred, style: { margin: '8px' }, ariaLabel: 'Star paper', onchange: event => updateForm('starred', event.target.checked) })),
       formInput('CANONICAL URL', 'canonical_url', { placeholder: 'https://…' }),
@@ -1776,7 +1788,7 @@
       const first = paper.authors[0] ? paper.authors[0].split(',')[0].trim().split(/\s+/).pop() : '';
       return [first ? `${first}${paper.authors.length > 1 ? ' et al.' : ''}` : '', paper.year, paper.venue].filter(Boolean).join(' · ');
     };
-    const symbols = paper => paper.topics.map(id => (topics.find(topic => topic.id === id) || {}).symbol).filter(Boolean).map(projectSymbol);
+    const symbols = paper => paper.topics.map(id => topicIcon(topics.find(topic => topic.id === id))).filter(Boolean);
     const rows = visible.map(paper => {
       const on = !e.excluded.has(paper.id);
       return h('label', { class: `export-paper${on ? '' : ' excluded'}` },
@@ -1822,7 +1834,7 @@
 
   function editTopic(topic) {
     if (!closeTopicEditor()) return;
-    state.topicForm = topic ? { ...topic, existing: true } : { id: '', label: '', description: '', relevance_criteria: '', symbol: '' };
+    state.topicForm = topic ? { ...topic, existing: true } : { id: '', label: '', description: '', relevance_criteria: '', symbol: '', color: '' };
     state.topicOriginal = JSON.stringify(state.topicForm);
     render();
     document.getElementById('topic-label').focus();
@@ -1836,14 +1848,17 @@
       if (!closeTopicEditor()) return;
       state.q = ''; applySavedFacets({ field: [topic.id] }); state.offset = 0; navigate('library'); loadPapers();
     };
-    const rows = topics.map(topic => h('article', { class: `topic-row${form && form.existing && form.id === topic.id ? ' active' : ''}` },
+    // Clicking anywhere on a row edits it; the buttons inside keep their own actions.
+    const rowClick = topic => event => { if (!state.topicSaving && !event.target.closest('button, a, input')) editTopic(topic); };
+    const rows = topics.map(topic => h('article', { class: `topic-row${form && form.existing && form.id === topic.id ? ' active' : ''}`, onclick: rowClick(topic) },
       h('div', { class: 'topic-row-identity' },
-        h('span', { class: 'topic-symbol-slot' }, projectSymbol(topic.symbol) || h('span', { class: 'topic-no-symbol', ariaHidden: true }, '—')),
+        h('span', { class: 'topic-symbol-slot' }, topicIcon(topic) || h('span', { class: 'topic-no-symbol', ariaHidden: true }, '—')),
         h('div', { class: 'topic-row-copy' },
-          h('h2', { ariaLabel: topic.label }, h('button', { class: 'topic-name-button', type: 'button', disabled: state.topicSaving, ariaLabel: `Edit ${topic.label}`, onclick: () => editTopic(topic) }, topic.label)),
+          h('h2', { ariaLabel: topic.label }, h('button', { class: 'topic-name-button', type: 'button', disabled: state.topicSaving, title: 'Edit topic', onclick: () => editTopic(topic) }, topic.label, h('span', { class: 'topic-edit-hint', ariaHidden: true }, ' ✎'))),
           h('p', { class: 'topic-description', title: topic.description }, topic.description || 'No research description'))),
       h('div', { class: 'topic-row-actions' },
         h('span', { class: `topic-criteria-status${topic.relevance_criteria ? ' configured' : ''}`, title: topic.relevance_criteria ? 'Relevance criteria configured' : 'No relevance criteria yet' }, topic.relevance_criteria ? 'Criteria set' : 'No criteria'),
+        h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, ariaLabel: `Edit ${topic.label}`, onclick: () => editTopic(topic) }, 'Edit'),
         h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, ariaLabel: `View papers in ${topic.label}`, onclick: () => viewPapers(topic) }, 'View papers'))
     ));
     const editor = form ? h('form', { class: 'topic-editor', ariaLabel: form.existing ? 'Edit topic' : 'New topic', onsubmit: event => { event.preventDefault(); saveTopic(); } },
@@ -1855,10 +1870,17 @@
         h('label', { for: 'topic-id' }, 'Topic ID'),
         h('input', { id: 'topic-id', class: 'input', value: form.id, required: true, disabled: form.existing, maxlength: 80, pattern: '[a-zA-Z0-9][a-zA-Z0-9_-]*', 'aria-describedby': 'topic-id-help', placeholder: 'uncertainty-calibration', oninput: event => { form.id = event.target.value; } }),
         h('p', { id: 'topic-id-help', class: 'topic-help' }, form.existing ? 'Permanent identifier used in search and paper links.' : 'Use letters, numbers, hyphens or underscores. This cannot be changed later.'),
-        h('fieldset', { class: 'symbol-picker' }, h('legend', null, 'Topic symbol'),
-          h('div', { class: 'symbol-options' }, ...[['', 'None'], ...Object.keys(PROJECT_SYMBOLS).map(symbol => [symbol, symbol[0].toUpperCase() + symbol.slice(1)])].map(([symbol, label]) =>
-            h('label', { class: 'symbol-choice', title: label }, h('input', { id: `topic-symbol-${symbol || 'none'}`, type: 'radio', name: 'topic-symbol', value: symbol, ariaLabel: label, checked: (form.symbol || '') === symbol, onchange: () => { form.symbol = symbol; } }), h('span', { class: 'symbol-tile' }, projectSymbol(symbol) || '—'), h('span', { class: 'symbol-choice-name' }, label)))),
-          h('p', { class: 'topic-help' }, 'Distinct shapes keep topics recognizable without relying on color.')),
+        h('fieldset', { class: 'symbol-picker' }, h('legend', null, 'Shape'),
+          h('div', { class: 'symbol-options' }, ...['', ...Object.keys(SYMBOL_PATHS)].map(symbol => {
+            const label = symbol ? symbolName(symbol) : 'No icon';
+            return h('label', { class: 'symbol-choice', title: label }, h('input', { id: `topic-symbol-${symbol || 'none'}`, type: 'radio', name: 'topic-symbol', value: symbol, ariaLabel: label, checked: (form.symbol || '') === symbol, onchange: () => { form.symbol = symbol; render(); } }), h('span', { class: 'symbol-tile' }, projectSymbol(symbol, form.color) || '—'), h('span', { class: 'symbol-choice-name' }, label));
+          }))),
+        h('fieldset', { class: 'symbol-picker', disabled: !form.symbol }, h('legend', null, 'Color'),
+          h('div', { class: 'symbol-options' }, ...['', ...TOPIC_COLORS].map(color => {
+            const label = color ? color[0].toUpperCase() + color.slice(1) : 'Neutral';
+            return h('label', { class: 'symbol-choice', title: label }, h('input', { id: `topic-color-${color || 'none'}`, type: 'radio', name: 'topic-color', value: color, ariaLabel: label, checked: (form.color || '') === color, onchange: () => { form.color = color; render(); } }), h('span', { class: 'symbol-tile' }, projectSymbol(form.symbol || 'circle', color)), h('span', { class: 'symbol-choice-name' }, label));
+          })),
+          h('p', { class: 'topic-help' }, form.symbol ? 'Okabe-Ito colors, chosen to stay distinct with common color blindness; the shape still does most of the work.' : 'Pick a shape first.')),
         h('label', { for: 'topic-description' }, 'Research description'),
         h('textarea', { id: 'topic-description', class: 'input topic-description-input', value: form.description, rows: 4, maxlength: 20000, placeholder: 'What questions does this topic cover?', oninput: event => { form.description = event.target.value; } }),
         h('label', { for: 'topic-criteria' }, 'Relevance criteria'),
@@ -1868,7 +1890,7 @@
       h('footer', { class: 'topic-editor-actions' }, h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, onclick: () => { if (closeTopicEditor()) render(); } }, 'Cancel'), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.topicSaving }, state.topicSaving ? 'Saving…' : 'Save topic'))
     ) : null;
     return h('main', { class: `topics-layout${form ? ' editing' : ''}` },
-      h('header', { class: 'topics-header' }, h('div', null, h('h1', null, 'Topics'), h('p', null, 'Organize your research topics, assign symbols, and define what makes a paper relevant.')),
+      h('header', { class: 'topics-header' }, h('div', null, h('h1', null, 'Topics'), h('p', null, 'Organize your research topics, give each an icon, and define what makes a paper relevant. Click a topic to edit it.')),
         h('button', { class: 'btn btn-primary', type: 'button', disabled: state.topicSaving, onclick: () => editTopic() }, '+ New topic')),
       h('div', { class: 'topics-workspace' },
         h('section', { class: 'topic-list', ariaLabel: 'Research topics' },

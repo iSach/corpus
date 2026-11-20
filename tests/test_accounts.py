@@ -74,7 +74,7 @@ def test_invite_is_bound_to_email_and_only_sets_up_on_password_submission(site):
     user = result.json()['user']
     assert user['role'] == 'member' and user['email'] == 'friend@example.org'
     assert visitor.get('/api/papers').json()['total'] == 0
-    assert visitor.get('/api/config').json()['fields'] == [{'id':'unfiled','label':'Unfiled','symbol':''}]
+    assert visitor.get('/api/config').json()['fields'] == [{'id':'unfiled','label':'Unfiled','symbol':'','color':''}]
     assert visitor.post('/api/invitations/accept', json={'token':key,'password':MEMBER_PASSWORD}).status_code == 400
     with app.state.accounts.registry() as db:
         stored = db.execute('SELECT * FROM invitations').fetchone()

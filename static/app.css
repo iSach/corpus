@@ -336,12 +336,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .topic-row.active { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
 .topic-row-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; flex: 1; }
 .topic-symbol-slot { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
-.topic-symbol-slot .project-symbol { margin: 0; }
+.topic-symbol-slot .project-symbol { margin: 0; width: 16px; height: 16px; }
 .topic-no-symbol { color: var(--soft); }
 .topic-row-copy { min-width: 0; }
 .topic-row h2 { margin: 0; font: 500 14px/1.4 var(--serif); }
 .topic-name-button { border: 0; padding: 0; background: transparent; text-align: left; overflow-wrap: anywhere; }
 .topic-name-button:hover { color: var(--accent-dark); text-decoration: underline; }
+.topic-row { cursor: pointer; }
+.topic-edit-hint { color: var(--soft); font-size: 12px; opacity: 0; }
+.topic-row:hover .topic-edit-hint, .topic-name-button:focus-visible .topic-edit-hint { opacity: 1; }
 .topic-description { margin: 3px 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .topic-row .topic-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topic-row-actions { display: flex; align-items: center; gap: 16px; flex: none; }
@@ -609,24 +612,29 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 
 /* Shape and color work together, with labels retained for every project. */
 .project-symbol { display: inline-block; flex: none; width: 1em; height: 1em; margin-right: .3em; vertical-align: -.125em; }
-.symbol-triangle { color: #0072b2; }
-.symbol-circle { color: #d55e00; }
-.symbol-square { color: #009e73; }
-.symbol-diamond { color: #cc79a7; }
-.symbol-star { color: #a36500; }
-.symbol-cross { color: #6b4c9a; }
-.symbol-hexagon { color: #007f86; }
-.symbol-pentagon { color: #b33f62; }
+.project-symbol { color: var(--ink-2); }
+/* Okabe-Ito colors plus a gray; min CAM02-UCS distance ~11 between any two (and neutral) under full protan,
+   deutan and tritan simulation. The pale ones get a hairline where they lack 3:1 contrast with the background. */
+.topic-color-vermillion { color: #d55e00; }
+.topic-color-orange { color: #e69f00; }
+.topic-color-yellow { color: #f0e442; }
+.topic-color-green { color: #009e73; }
+.topic-color-sky { color: #56b4e9; }
+.topic-color-blue { color: #0072b2; }
+.topic-color-purple { color: #cc79a7; }
+.topic-color-gray { color: #5a5a5a; }
+.topic-color-orange path, .topic-color-yellow path, .topic-color-sky path, .topic-color-purple path { stroke: rgba(0,0,0,.45); stroke-width: 1.5px; stroke-linejoin: round; paint-order: stroke; }
 .project-name { display: inline-flex; align-items: baseline; margin-right: .75em; }
 .symbol-picker { border: 0; padding: 0; margin: 12px 0; }
-.symbol-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.symbol-options { display: flex; flex-wrap: wrap; gap: 5px; }
 .symbol-choice { position: relative; display: flex; cursor: pointer; }
 .symbol-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.symbol-tile { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
-.symbol-tile .project-symbol { margin: 0; }
+.symbol-tile { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.symbol-tile .project-symbol { margin: 0; width: 18px; height: 18px; }
 .symbol-choice input:checked + .symbol-tile { border: 2px solid var(--accent-dark); background: var(--accent-soft); }
 .symbol-choice input:focus-visible + .symbol-tile { outline: 2px solid var(--accent-dark); outline-offset: 2px; }
 .symbol-choice:hover .symbol-tile { border-color: var(--accent-dark); }
+.symbol-picker:disabled .symbol-choice { cursor: default; opacity: .45; }
 .symbol-choice-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .inbox-item-meta .project-name { margin-right: 0; }
 
@@ -649,6 +657,9 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   --accent: #91b8d7; --accent-dark: #b9d8ef; --accent-soft: rgba(115,164,201,.20);
   --neutral-300: #455767;
 }
+:root[data-theme="midnight"] .topic-color-gray, :root[data-theme="oled"] .topic-color-gray { color: #6e6e6e; }
+:root[data-theme="midnight"] .project-symbol path, :root[data-theme="oled"] .project-symbol path { stroke: none; }
+:root[data-theme="midnight"] .topic-color-blue path, :root[data-theme="oled"] .topic-color-blue path { stroke: rgba(255,255,255,.55); stroke-width: 1.5px; stroke-linejoin: round; paint-order: stroke; }
 :root[data-theme="oled"] {
   color-scheme: dark;
   --bg: #000; --surface: #101010; --surface-2: #181818;
@@ -680,11 +691,4 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 :root[data-theme="midnight"] .artifact-badge, :root[data-theme="oled"] .artifact-badge,
 :root[data-theme="midnight"] .format-tabs, :root[data-theme="oled"] .format-tabs,
 :root[data-theme="midnight"] .format-tab, :root[data-theme="oled"] .format-tab { border-color: var(--line); }
-:root[data-theme="midnight"] .symbol-triangle, :root[data-theme="oled"] .symbol-triangle { color: #73c7ef; }
-:root[data-theme="midnight"] .symbol-circle, :root[data-theme="oled"] .symbol-circle { color: #ffae76; }
-:root[data-theme="midnight"] .symbol-square, :root[data-theme="oled"] .symbol-square { color: #6dd9b4; }
-:root[data-theme="midnight"] .symbol-diamond, :root[data-theme="oled"] .symbol-diamond { color: #e6a4cd; }
-:root[data-theme="midnight"] .symbol-star, :root[data-theme="oled"] .symbol-star { color: #e8bf75; }
-:root[data-theme="midnight"] .symbol-cross, :root[data-theme="oled"] .symbol-cross { color: #c8a9ee; }
-:root[data-theme="midnight"] .symbol-hexagon, :root[data-theme="oled"] .symbol-hexagon { color: #72d4d4; }
-:root[data-theme="midnight"] .symbol-pentagon, :root[data-theme="oled"] .symbol-pentagon { color: #f0a1b7; }
+:root[data-theme="midnight"] .symbol-triangle, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-circle, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-square, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-diamond, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-star, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-cross, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-hexagon, :root[data-theme="oled"] :root[data-theme="midnight"] .symbol-pentagon, :root[data-theme="oled"] 
