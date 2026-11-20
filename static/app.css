@@ -613,13 +613,13 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 /* Shape and color work together, with labels retained for every project. */
 .project-symbol { display: inline-block; flex: none; width: 1em; height: 1em; margin-right: .3em; vertical-align: -.125em; }
 .project-symbol { color: var(--ink-2); }
-/* Okabe-Ito colors (minus orange and black); min CAM02-UCS distance ~11 between any two (and neutral) under full protan,
+/* Okabe-Ito colors (minus orange and black); min CAM02-UCS distance ~13 between any two (and neutral) under full protan,
    deutan and tritan simulation. The pale ones get a hairline where they lack 3:1 contrast with the background. */
 .topic-color-vermillion { color: #d55e00; }
 .topic-color-yellow { color: #f0e442; }
 .topic-color-green { color: #009e73; }
 .topic-color-sky { color: #56b4e9; }
-.topic-color-blue { color: #0072b2; }
+.topic-color-blue { color: #002fa7; } /* International Klein Blue in place of Okabe-Ito's #0072b2 */
 .topic-color-purple { color: #cc79a7; }
 .topic-color-yellow path, .topic-color-sky path, .topic-color-purple path { stroke: rgba(0,0,0,.45); stroke-width: 1.5px; stroke-linejoin: round; paint-order: stroke; }
 .project-name { display: inline-flex; align-items: baseline; margin-right: .75em; }
@@ -656,7 +656,7 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   --neutral-300: #455767;
 }
 :root[data-theme="midnight"] .project-symbol path, :root[data-theme="oled"] .project-symbol path { stroke: none; }
-:root[data-theme="midnight"] .topic-color-blue path, :root[data-theme="oled"] .topic-color-blue path { stroke: rgba(255,255,255,.55); stroke-width: 1.5px; stroke-linejoin: round; paint-order: stroke; }
+:root[data-theme="midnight"] .topic-color-blue, :root[data-theme="oled"] .topic-color-blue { color: #3d6bff; } /* Klein blue vanishes on dark; royal blue keeps the hue */
 :root[data-theme="oled"] {
   color-scheme: dark;
   --bg: #000; --surface: #101010; --surface-2: #181818;
