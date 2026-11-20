@@ -196,6 +196,22 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .table-cell { display: flex; align-items: center; min-width: 0; padding: 0 6px; border-right: 1px solid var(--line-soft); overflow: hidden; }
 .table-head .table-cell { padding-top: 4px; padding-bottom: 4px; border-right-color: var(--line); }
 .table-cell.gutter { width: 20px; flex: none; justify-content: center; color: var(--accent); font: 9px var(--mono); }
+.table-head .table-cell.sortable { padding: 0; }
+.sort-button {
+  display: flex; align-items: center; justify-content: inherit; gap: 3px;
+  width: 100%; height: 100%; min-width: 0; padding: 4px 6px;
+  border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; cursor: pointer;
+}
+.sort-button:hover, .table-head .sorted .sort-button { color: var(--ink); }
+.sort-button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.sort-label { overflow: hidden; text-overflow: ellipsis; }
+.table-head .table-cell.sortable { position: relative; }
+/* The arrow sits in the cell's corner so it never pushes a narrow label into an ellipsis. */
+.sort-arrow { position: absolute; top: 1px; right: 2px; color: var(--accent); font-size: 6px; line-height: 1; }
+.sort-arrow:empty { display: none; }
+.table-head .table-cell.gutter .sort-button { padding: 4px 0; color: var(--accent); }
+.table-head .table-cell.score .sort-button, .table-head .table-cell.year .sort-button { padding: 4px 1px; font-size: 9.5px; letter-spacing: 0; }
+.table-head .table-cell.gutter .sort-arrow { right: 1px; }
 .table-cell.title { flex: 1; gap: 7px; overflow: hidden; }
 .table-cell.venue { width: 96px; flex: none; color: var(--muted); font: 10.5px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
 .table-cell.year { width: 34px; flex: none; justify-content: flex-end; color: var(--muted); font: 10.5px var(--mono); }
