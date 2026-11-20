@@ -617,7 +617,7 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
    deutan and tritan simulation. The pale ones get a hairline where they lack 3:1 contrast with the background. */
 .topic-color-vermillion { color: #d55e00; }
 .topic-color-yellow { color: #f0e442; }
-.topic-color-green { color: #009e73; }
+.topic-color-green { color: #007349; } /* darker than Okabe-Ito's #009e73, which looks off on light */
 .topic-color-sky { color: #56b4e9; }
 .topic-color-blue { color: #002fa7; } /* International Klein Blue in place of Okabe-Ito's #0072b2 */
 .topic-color-purple { color: #cc79a7; }
@@ -656,6 +656,7 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
   --neutral-300: #455767;
 }
 :root[data-theme="midnight"] .project-symbol path, :root[data-theme="oled"] .project-symbol path { stroke: none; }
+:root[data-theme="midnight"] .topic-color-green, :root[data-theme="oled"] .topic-color-green { color: #009e73; }
 :root[data-theme="midnight"] .topic-color-blue, :root[data-theme="oled"] .topic-color-blue { color: #3d6bff; } /* Klein blue vanishes on dark; royal blue keeps the hue */
 :root[data-theme="oled"] {
   color-scheme: dark;
