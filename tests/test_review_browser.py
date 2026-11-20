@@ -66,3 +66,14 @@ def test_claude_review_runs_in_background_and_shows_in_inbox(tmp_path, browser, 
             page.locator('.claude-backfill input').check()
         expect(page.locator('.claude-backfill input')).to_be_checked()
         assert page.request.get(site + '/api/ai').json()['backfill'] is True
+        # A pause shows its reason and a RESUME NOW control without making the bar taller.
+        height = page.locator('.claude-queue').bounding_box()['height']
+        ai_review.pacer(settings).pause(time.time() + 3600, 'usage limit reached')
+        page.get_by_role('button', name='REFRESH', exact=True).click()
+        expect(page.locator('.claude-queue.paused .claude-queue-text')).to_contain_text('usage limit reached')
+        resume = page.locator('.claude-queue-controls').get_by_role('button', name='RESUME NOW', exact=True)
+        expect(resume).to_be_visible()
+        assert page.locator('.claude-queue').bounding_box()['height'] == height
+        resume.click()
+        expect(page.locator('.claude-queue-text')).to_have_text('all caught up')
+        expect(resume).to_have_count(0)

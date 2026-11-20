@@ -1612,11 +1612,14 @@
       : !waiting ? 'all caught up'
       : pacing.daily_limit && pacing.calls_today >= pacing.daily_limit ? 'daily limit reached; continues tomorrow'
       : pacing.next_call_in ? `next review in ${minutes(pacing.next_call_in)}` : 'reviewing';
-    return h('div', { class: 'claude-queue', role: 'status' },
-      h('span', null, `CLAUDE · ${status.backend === 'cli' ? 'subscription' : 'API'} · ${state_}`),
-      h('span', { class: 'soft' }, `${waiting} waiting (${queue.inbox} inbox · ${queue.update} updates · ${queue.library} library) · ${pacing.calls_today}${pacing.daily_limit ? '/' + pacing.daily_limit : ''} today · ${status.month.reviews} this month${status.month.cost_usd ? ` (≈ $${status.month.cost_usd.toFixed(2)} at API prices)` : ''}${status.failed ? ` · ${status.failed} failed` : ''}`),
-      h('label', { class: 'claude-backfill' }, h('input', { type: 'checkbox', checked: status.backfill, onchange: event => updateClaudeQueue({ backfill: event.target.checked }) }), 'review library papers too'),
-      pacing.paused_until ? h('button', { class: 'btn', type: 'button', onclick: () => updateClaudeQueue({ resume: true }) }, 'RESUME NOW') : null);
+    const stats = `${waiting} waiting (${queue.inbox} inbox · ${queue.update} updates · ${queue.library} library) · ${pacing.calls_today}${pacing.daily_limit ? '/' + pacing.daily_limit : ''} today · ${status.month.reviews} this month${status.month.cost_usd ? ` (≈ $${status.month.cost_usd.toFixed(2)} at API prices)` : ''}${status.failed ? ` · ${status.failed} failed` : ''}`;
+    // Status left, stats in the middle (cut off rather than wrapping), controls pinned right.
+    return h('div', { class: `claude-queue${pacing.paused_until ? ' paused' : ''}`, role: 'status' },
+      h('span', { class: 'claude-queue-state' }, h('span', { class: 'claude-queue-label', title: status.backend === 'cli' ? 'Claude subscription' : 'Claude API' }, 'CLAUDE'), h('span', { class: 'claude-queue-text', title: state_ }, state_)),
+      h('span', { class: 'claude-queue-stats soft', title: stats }, stats),
+      h('span', { class: 'claude-queue-controls' },
+        h('label', { class: 'claude-backfill' }, h('input', { type: 'checkbox', checked: status.backfill, onchange: event => updateClaudeQueue({ backfill: event.target.checked }) }), 'review library papers too'),
+        pacing.paused_until ? h('button', { class: 'btn', type: 'button', onclick: () => updateClaudeQueue({ resume: true }) }, 'RESUME NOW') : null));
   }
 
   function renderInbox() {

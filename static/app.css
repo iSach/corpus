@@ -316,8 +316,20 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .claude-more { margin: 6px 0; }
 .claude-more summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
 .claude-more blockquote { margin: 6px 0; padding-left: 8px; border-left: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
-.claude-queue { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 2px 12px; padding: 4px 10px; border-bottom: 1px solid var(--line); font: 10px/1.5 var(--mono); }
+.claude-queue { display: flex; flex: none; align-items: center; gap: 12px; min-height: 25px; padding: 0 10px; border-bottom: 1px solid var(--line); font: 10px/1.5 var(--mono); }
+.claude-queue-state { flex: 0 1 auto; min-width: 0; display: inline-flex; gap: 8px; color: var(--ink); }
+.claude-queue-label { flex: none; color: var(--muted); letter-spacing: .04em; }
+.claude-queue-text, .claude-queue-stats { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claude-queue.paused .claude-queue-state { color: var(--accent-dark); }
+.claude-queue-stats { flex: 1 1 0; }
+.claude-queue-controls { flex: none; display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
+.claude-queue-controls .btn { padding: 1px 6px; font-size: 10px; }
 .claude-backfill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.claude-backfill input { width: 11px; height: 11px; margin: 0; accent-color: var(--accent); }
+@media (max-width: 820px) {
+  .claude-queue { flex-wrap: wrap; gap: 2px 12px; padding: 3px 10px; }
+  .claude-queue-stats { order: 3; flex-basis: 100%; }
+}
 .review-evidence details { margin: 6px 0; }
 .review-evidence summary, .inbox-provenance summary { cursor: pointer; color: var(--muted); font: 10px/1.5 var(--mono); }
 .review-comparison > p, .review-history-entry { margin: 5px 0; padding: 5px 0; font-size: 12px; line-height: 1.5; }
