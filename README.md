@@ -260,6 +260,8 @@ sudo journalctl -u corpus -f
 
 Copy `docs/nginx.conf` into the nginx site configuration, replace `literature.example.org` and the certificate paths, enable the site, validate it, and reload nginx. The template overwrites `X-Forwarded-For` with `$remote_addr`; this is required because `run.py` trusts forwarded headers only from its loopback proxy. Do not expose port 8000 directly or add public addresses to `forwarded_allow_ips`.
 
+To deploy every tested push to `main` automatically (with a backup, a migration rehearsal on a copy and a rollback if the server doesn't start), see [docs/deploy.md](docs/deploy.md).
+
 ## Backup and restore
 
 ### Nightly database backups
