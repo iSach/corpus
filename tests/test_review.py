@@ -112,9 +112,8 @@ def test_criteria_change_preserves_but_invalidates_old_assessments(library):
     response=client.post('/api/topics',json={'id':'physics','label':'Physics','relevance_criteria':'Require dynamics evidence.'})
     assert response.status_code==200
     new=paper(client,pid)['review']
-    assert new['current']['assessor']=='automatic-topic-match-v1'
+    assert new['current']['assessor']=='not-assessed'
     assert new['current']['id'] != old['id']
-    assert new['current']['confidence'] == 'low'
     assert old['id'] in [entry['id'] for entry in new['history']]
 
 
@@ -129,45 +128,16 @@ def test_dismissing_cancels_pending_review_download(library,monkeypatch):
     assert downloads==[]
 
 
-def test_automatic_topic_match_on_arrival_and_edit(library):
-    client, settings = library
-    with connection(settings) as db:
-        db.execute("UPDATE fields SET relevance_criteria='physical regimes' WHERE id='physics'")
-    pid = ingest(client, proposal(proposed_scores={}))['results'][0]['id']
-    item = paper(client, pid)
-    review = item['review']['current']
-    assert review['assessor'] == 'automatic-topic-match-v1'
-    assert review['confidence'] == 'low'
-    assert 'physical, regimes' in review['explanation']
-    assert item['proposed_rel'] == 10 and item['rel'] is None
-    assert item['proposed_cred'] is None and item['proposed_qual'] is None
-    assert item['review']['check'] is None
-    assert client.get('/api/inbox', params={'evidence':'abstract'}).json()['total'] == 1
-    with connection(settings) as db:
-        from corpus.review import ensure_abstract
-        assert ensure_abstract(db,pid)['id'] == review['id']
-        assert db.execute('SELECT count(*) FROM review_assessments WHERE paper_id=?',(pid,)).fetchone()[0] == 1
-
-
-def test_startup_backfills_existing_unassessed_inbox(library):
+def test_startup_prepares_one_placeholder_per_inbox_paper(library):
     client, settings = library
     pid = ingest(client, proposal(proposed_scores={}))['results'][0]['id']
     from corpus.review import prepare_pending
     with connection(settings) as db:
-        # Simulate a pending record created before automatic matching existed.
-        db.execute("UPDATE fields SET relevance_criteria='physical regimes' WHERE id='physics'")
-        from corpus.review import subject
-        _, snapshot, digest, _ = subject(db, pid)
-        db.execute('UPDATE review_assessments SET input_hash=?,snapshot=? WHERE paper_id=?',
-                   (digest, json.dumps(snapshot), pid))
-    before = paper(client,pid)['review']['current']
-    assert before['assessor'] == 'not-assessed'
-    with connection(settings) as db:
         prepare_pending(db)
         prepare_pending(db)
-    after = paper(client,pid)
-    assert after['review']['current']['assessor'] == 'automatic-topic-match-v1'
-    assert after['proposed_rel'] == 10
-    assert after['rel'] is None
-    assert after['review']['current']['id'] == before['id']
+    after = paper(client, pid)
+    assert after['review']['current']['assessor'] == 'not-assessed'
+    assert after['proposed_rel'] is None and after['rel'] is None
     assert len(after['review']['history']) == 1
+
+

@@ -60,18 +60,8 @@ A small GitHub Actions cache remembers the arXiv IDs already sent for each topic
 
 The workflow summary shows accepted, duplicate, and rejected counts in its `Discover and import` log. Accepted matches wait in **Inbox → Pending** until you approve or dismiss them; the **Stats** screen shows the associated ingest run and provenance.
 
-## Automatic preliminary relevance
+## Claude reviews
 
-When a paper enters the Inbox and its topic has relevance criteria, Corpus computes a preliminary 0–10 keyword overlap score from its title and abstract. The Inbox relevance panel explains the matching terms and labels the assessment automatic, with low confidence. Edit details shows the automatic assessment and draft score. Importer scores, when present, remain available; personal scores are unchanged until you accept and save a draft.
+The watch only selects papers by their arXiv query; it doesn't judge them. When Claude reviews are set up, every new Inbox paper gets a summary of its contributions and a 0–10 relevance judgment for each of its topics, so you can triage the Inbox quickly. See [Claude reviews](claude-reviews.md).
 
-This is a topic-match heuristic, not a scientific review: synonyms and exclusions may be misread. Credibility, quality and reproducibility stay unset. Topics without criteria remain awaiting assessment; add criteria in Topics to enable automatic matching. Existing unassessed Inbox papers are backfilled at application startup and when topic criteria change; completed assessments are preserved. A PDF download alone never counts as a full-text review.
-
-## Anthropic AI reviews
-
-Set `ANTHROPIC_API_KEY` in the server environment (`/etc/corpus/corpus.env` for the systemd installation), then restart `corpus.service`. `CORPUS_AI_MODEL` defaults to `claude-sonnet-5-5`; set it to another Claude model ID to choose a different model. `CORPUS_AI_REVIEWS=0` pauses the AI worker without deleting previous reviews. Keys never appear in API responses or browser configuration.
-
-The background worker reviews new and existing pending Inbox papers with an abstract and topic relevance criteria, replacing unassessed or keyword-only matches. It sends the title, abstract and topic brief to Anthropic, and records the model, prompt version, source snapshot, relevance explanation, uncertainty and proposed scores. It does not fetch full text for the LLM. Scores for credibility, methodology and reimplementation can remain unknown when abstract evidence is insufficient. All four scores are drafts; personal scores, library admission and reading state remain under your control. Existing owner and discovery-agent reviews are preserved.
-
-Jobs persist across restarts, retry failures up to three times with backoff, and discard results if the paper, topic or assessment changes while the request runs. The Inbox and edit page show the model and job status. Failed jobs can be retried from the Inbox's **REQUEST AI REVIEW** button. Once a review succeeds it is not regenerated merely because the app restarts or the configured model changes.
-
-The keyword matcher above remains a clearly labeled preliminary fallback when no LLM review exists. Configuring Anthropic upgrades those matches automatically.
+Without Claude, new papers wait in the Inbox as "awaiting assessment" until you or an agent assess them.

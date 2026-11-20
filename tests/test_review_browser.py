@@ -1,6 +1,10 @@
 """Daily review with an actual server, worker, database, and browser."""
 import time
 
+from corpus import ai_review
+from corpus.config import Settings
+from helpers import ai_result, open_page, serve
+
 from playwright.sync_api import expect
 
 
@@ -38,3 +42,27 @@ def test_full_text_comparison_and_approval_evidence(review_page):
     approved=page.request.get(site+'/api/paper',params={'id':pid}).json()
     assert approved['admission']=='approved' and approved['state']=='unreviewed'
     assert approved['last_decision']['assessment_id']==approved['review']['current']['id']
+
+
+def test_claude_review_runs_in_background_and_shows_in_inbox(tmp_path, browser, monkeypatch):
+    monkeypatch.setattr(ai_review, 'generate', lambda settings, prompt: (ai_result(topics=('unfiled',)), {'input_tokens': 900, 'output_tokens': 300, 'cost_usd': 0.02}))
+    settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False, ingest_token='claude-browser-token', anthropic_api_key='fake', ai_poll_interval=0.1)
+    with serve(lambda origin: settings) as site, open_page(browser, height=1000) as page:
+        response = page.request.post(site + '/api/ingest', headers={'Authorization': 'Bearer claude-browser-token'},
+                                     data={'papers': [{'title': 'Regime transfer for surrogate solvers', 'authors': ['Fixture Author'],
+                                                       'abstract': 'We test surrogates on unseen regimes.', 'doi': '10.5555/claude-browser'}]})
+        pid = response.json()['results'][0]['id']
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and not page.request.get(site + '/api/paper', params={'id': pid}).json()['review']['claude']:
+            time.sleep(.1)
+        page.goto(site + '/?screen=inbox')
+        page.get_by_role('link', name='Inbox', exact=True).click()
+        expect(page.locator('.claude-tldr')).to_have_text('Maps where reaction-diffusion solvers stop generalizing.')
+        expect(page.locator('.claude-topic-score')).to_contain_text('8/10 · high')
+        expect(page.locator('.claude-queue')).to_contain_text('all caught up')
+        expect(page.locator('.claude-queue')).to_contain_text('1 this month')
+        expect(page.locator('.review-facts')).to_contain_text('Claude · claude-opus-5-5')
+        with page.expect_response(lambda response: response.url.endswith('/api/ai') and response.request.method == 'POST'):
+            page.locator('.claude-backfill input').check()
+        expect(page.locator('.claude-backfill input')).to_be_checked()
+        assert page.request.get(site + '/api/ai').json()['backfill'] is True

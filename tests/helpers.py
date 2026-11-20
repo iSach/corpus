@@ -93,14 +93,19 @@ def assessment(**changes):
             'questions': [], **changes}
 
 
-def ai_result():
-    return {'priority': 'medium', 'role': 'evaluation', 'confidence': 'moderate',
-            'explanation': 'The abstract evaluates generalization to unseen physical regimes.',
-            'limitation': 'Abstract only; experiments and implementation have not been inspected.',
-            'questions': [], 'scores': {'rel': 8, 'cred': None, 'qual': None, 'reimpl': None},
-            'score_reasons': {'rel': 'Direct physical-regime transfer evaluation.',
-                              'cred': 'Insufficient abstract evidence.', 'qual': 'Needs methods inspection.',
-                              'reimpl': 'No implementation detail supplied.'}}
+def ai_result(topics=('physics',), **changes):
+    """A well-formed Claude review, as the model returns it."""
+    return {'digest': {'tldr': 'Maps where reaction-diffusion solvers stop generalizing.',
+                       'contributions': ['A benchmark of unseen physical regimes.', 'A boundary-detection metric.'],
+                       'method': 'Trains surrogates on one regime and tests on others.',
+                       'results': 'Reports error growth beyond the training regime.',
+                       'limitations': 'Only two equation families.', 'kind': 'benchmark'},
+            'topics': [{'topic': topic, 'relevance': 8, 'priority': 'high', 'role': 'evaluation', 'confidence': 'moderate',
+                        'explanation': 'The abstract evaluates generalization to unseen physical regimes.',
+                        'questions': ['Which regimes are held out?']} for topic in topics],
+            'suggested_topics': [], 'scores': {'cred': 6, 'qual': 7, 'reimpl': 5},
+            'score_reasons': {'cred': 'Abstract only.', 'qual': 'Needs methods inspection.', 'reimpl': 'No code details.'},
+            'evidence': [], 'limitation': 'Experiments were not inspected.', **changes}
 
 
 def paper(client, pid):

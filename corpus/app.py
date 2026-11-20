@@ -11,7 +11,7 @@ from .db import connection, initialize, validate_paper, find_duplicate, duplicat
 from .query import QueryError, compile_query
 from .exporting import export_papers, export_papers_list, get_preferences, save_preferences, set_exclusions
 from .stats import stats
-from .ai_review import worker as ai_worker, enabled as ai_enabled
+from .ai_review import worker as ai_worker, enabled as ai_enabled, backend as ai_backend, install_routes as install_ai_routes
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
 from .topics import list_topics, save_topic
@@ -68,6 +68,7 @@ def create_app(settings=None):
     limits=Limiter()
     passkeys=Passkeys(settings)
     tasks={}
+    ai_started=set()
     worker_stop=None
     worker_loop=None
     def start_workers(user_id):
@@ -76,13 +77,17 @@ def create_app(settings=None):
         if asyncio.get_running_loop() is not worker_loop:
             worker_loop.call_soon_threadsafe(start_workers,user_id)
             return
-        if user_id in tasks: return
         concrete=accounts.library(user_id)
-        tasks[user_id]=[]
-        if concrete.pdf_jobs:
-            tasks[user_id].append(asyncio.create_task(worker(concrete,worker_stop)))
-            if concrete.venue_checks: tasks[user_id].append(asyncio.create_task(venue_worker(concrete,worker_stop)))
-        if ai_enabled(concrete): tasks[user_id].append(asyncio.create_task(ai_worker(concrete,worker_stop)))
+        if user_id not in tasks:
+            tasks[user_id]=[]
+            if concrete.pdf_jobs:
+                tasks[user_id].append(asyncio.create_task(worker(concrete,worker_stop)))
+                if concrete.venue_checks: tasks[user_id].append(asyncio.create_task(venue_worker(concrete,worker_stop)))
+        # Claude settings can be switched on later from the admin page; the
+        # worker then idles whenever reviews are off again.
+        if ai_enabled(concrete) and user_id not in ai_started:
+            ai_started.add(user_id)
+            tasks[user_id].append(asyncio.create_task(ai_worker(concrete,worker_stop)))
     @asynccontextmanager
     async def lifespan(app):
         nonlocal worker_stop,worker_loop
@@ -108,6 +113,7 @@ def create_app(settings=None):
             for group in tasks.values():
                 for task in group: await task
             tasks.clear()
+            ai_started.clear()
     app=FastAPI(title='Corpus',docs_url=None,redoc_url=None,openapi_url=None,lifespan=lifespan)
     app.state.settings=owner_settings
     app.state.accounts=accounts
@@ -185,7 +191,7 @@ def create_app(settings=None):
     @app.get('/api/config')
     def config(request:Request):
         with connection(settings,True) as db: fields=[dict(r) for r in db.execute('SELECT id,label,symbol FROM fields ORDER BY rowid')] if authenticated(request) else []
-        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model} if authenticated(request) or settings.dev else None}
+        return {'fields':fields,'auth_required':not settings.dev,'sql_local_only':settings.sql_local_only,'passkeys':passkeys.status(request), 'ai_review':{'enabled':ai_enabled(settings),'model':settings.ai_model,'backend':ai_backend(settings)} if authenticated(request) or settings.dev else None}
     @app.get('/api/topics')
     def topics():
         with connection(settings,True) as db: return {'topics':list_topics(db)}
@@ -218,6 +224,7 @@ def create_app(settings=None):
     install_passkey_routes(app,passkeys,limits,check_password,issue_session)
     install_inbox_routes(app,settings)
     install_review_routes(app,settings)
+    install_ai_routes(app,settings)
     install_capture_routes(app,settings,limits)
     install_venue_routes(app,settings,limits)
     @app.post('/api/logout')
