@@ -125,3 +125,30 @@ def test_score_cells_are_tinted_by_score_except_in_bars_view(page):
     page.reload()
     expect(page.locator('.table-region.bars-view')).to_be_visible()
     assert page.locator('.paper-row', has_text='Alpha scientific posterior').locator('.table-cell.score').first.get_attribute('style') is None
+
+
+def test_column_headers_sort_the_table(page):
+    rows=page.locator('.paper-row .title-text')
+    expect(rows).to_have_count(3)
+    head=page.locator('.table-head')
+    title=head.get_by_role('button',name='TITLE / AUTHORS')
+    title.click()
+    expect(head.locator('.sorted')).to_have_attribute('aria-sort','ascending')
+    names=rows.all_inner_texts()
+    assert names==sorted(names,key=str.casefold)
+    title.click()
+    expect(head.locator('.sorted')).to_have_attribute('aria-sort','descending')
+    assert rows.all_inner_texts()==names[::-1]
+    expect(page.locator('.table-footer')).to_contain_text('sort: title ↓')
+    # Each column header sorts; a first click on a score puts the best first.
+    for label in ('★','VENUE','YR','REL','CRED','QUAL','REIMPL','ART','ADDED'):
+        head.get_by_role('button',name=label,exact=True).click()
+        expect(head.locator('.sorted .sort-button')).to_have_attribute('data-focus-key',f'sort-{ {"★":"flag","YR":"year","ART":"art"}.get(label,label.lower()) }')
+    head.get_by_role('button',name='REL',exact=True).click()
+    expect(head.locator('.sorted')).to_have_attribute('aria-sort','descending')
+    # The choice survives a reload; typing a sort: directive takes over again.
+    page.reload()
+    expect(page.locator('.table-head .sorted')).to_have_attribute('aria-sort','descending')
+    page.get_by_role('searchbox',name='Search query').fill('sort:+title')
+    expect(page.locator('.table-head .sorted .sort-button')).to_have_attribute('data-focus-key','sort-title')
+    expect(page.locator('.table-head .sorted')).to_have_attribute('aria-sort','ascending')

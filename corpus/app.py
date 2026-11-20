@@ -232,9 +232,9 @@ def create_app(settings=None):
         with accounts.session_lock: accounts.sessions.pop(request.cookies.get('corpus_session',''),None)
         r=JSONResponse({'authenticated':False}); r.delete_cookie('corpus_session'); return r
     @app.get('/api/papers')
-    def papers(q:str='',facets:str='{}',limit:int=100,offset:int=0):
+    def papers(q:str='',facets:str='{}',limit:int=100,offset:int=0,sort:str=''):
         if not 1<=limit<=500 or offset<0: raise HTTPException(400,'Invalid pagination')
-        with connection(settings,True) as db: return search(db,q,json.loads(facets),limit,offset)
+        with connection(settings,True) as db: return search(db,q,json.loads(facets),limit,offset,sort or None)
     @app.get('/api/paper')
     def paper(id:str,q:str=''):
         with connection(settings,True) as db: p=get_paper(db,id,q)

@@ -25,7 +25,7 @@ def test_bound_values_and_literals():
     q=compile_query('author:"O\'Brien" pdf:"posterior collapse" rel:>=7 sort:-year')
     assert "O'Brien" not in q.where
     assert q.params==['authors : "O\'Brien"','"posterior collapse"',7]
-    assert q.order=='p.year DESC NULLS LAST, p.id ASC'
+    assert q.order=='p.year DESC NULLS LAST, p.added DESC, p.id ASC'
     assert q.pdf_terms==['posterior collapse']
     assert compile_query('"a\\"b"').params==['"a""b"']
 
@@ -78,3 +78,21 @@ def test_fts_updates(database):
 @pytest.mark.parametrize('facets',[{'what':['x']},{'rel':11},{'rel':'7'},{'field':'sbi'},{'year':['not-year']},{'has':['thing']}])
 def test_invalid_facets(facets):
     with pytest.raises(QueryError): compile_query('',facets)
+
+def test_column_sorts(database):
+    db=database
+    ids={p['title']:p['id'] for p in search(db)['papers']}
+    db.execute('UPDATE papers SET starred=1, venue=? WHERE id=?',('ICML',ids['Beta diffusion']))
+    db.execute("INSERT INTO artifacts(paper_id,kind,url) VALUES(?,'code','https://example.org/code')",(ids['Gamma posterior'],))
+    sorted_titles=lambda sort,q='':[p['title'] for p in search(db,q,None,sort=sort)['papers']]
+    assert sorted_titles('title')==['Alpha posterior inference','Beta diffusion','Gamma posterior']
+    assert sorted_titles('-title')==['Gamma posterior','Beta diffusion','Alpha posterior inference']
+    assert sorted_titles('rel')==['Alpha posterior inference','Beta diffusion','Gamma posterior']
+    assert sorted_titles('+rel')==['Beta diffusion','Alpha posterior inference','Gamma posterior']  # unscored stays last
+    assert sorted_titles('flag')[:2]==['Beta diffusion','Gamma posterior']  # starred, then unreviewed
+    assert sorted_titles('art')[0]=='Gamma posterior'  # PDF + SRC
+    assert sorted_titles('venue')[0]=='Beta diffusion'  # papers without a venue go last
+    # The column choice wins over a sort: directive in the query.
+    assert sorted_titles('-title','sort:title')[0]=='Gamma posterior'
+    assert search(db,'',None,sort='-title')['sort_desc'] is True
+    with pytest.raises(QueryError): search(db,'',None,sort='nope')

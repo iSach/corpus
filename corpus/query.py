@@ -118,7 +118,22 @@ class Parser:
         finally: self.depth -= 1
 
 SCORES = ('rel','cred','qual','reimpl')
-SORTS = {'rel':'rel','cred':'cred','qual':'qual','reimpl':'reimpl','added':'added','modified':'modified','year':'year','title':'title','venue':'venue'}
+# Sort name -> SQL expression. 'flag' is the table's starred/unreviewed gutter and 'art' its PDF/SRC badges.
+SORTS = {'rel':'p.rel','cred':'p.cred','qual':'p.qual','reimpl':'p.reimpl','added':'p.added','modified':'p.modified','year':'p.year',
+         'title':'p.title COLLATE NOCASE','venue':"NULLIF(p.venue,'') COLLATE NOCASE",
+         'flag':"(p.starred*2 + (p.state='unreviewed'))",
+         'art':"(EXISTS (SELECT 1 FROM artifacts a WHERE a.paper_id=p.id AND a.kind='pdf')*2 + EXISTS (SELECT 1 FROM artifacts a WHERE a.paper_id=p.id AND a.kind='code'))"}
+# Columns whose bare name sorts high-to-low: sort:rel puts the best papers first.
+DESCENDING = {*SCORES, 'flag', 'art'}
+
+def sort_order(sort):
+    """'-name' sorts descending, '+name' ascending, a bare name in the column's natural direction."""
+    name = sort.lstrip('+-')
+    if name not in SORTS: raise QueryError('Unknown sort column: ' + name)
+    descending = sort.startswith('-') or (not sort.startswith('+') and name in DESCENDING)
+    # Ties (same score, same badges, same flag) fall back to newest first.
+    tie = '' if name == 'added' else 'p.added DESC, '
+    return f'{SORTS[name]} {"DESC" if descending else "ASC"} NULLS LAST, {tie}p.id ASC', descending
 
 def fts_literal(value):
     if not any(c.isalnum() for c in value): raise QueryError('Search terms must contain a letter or number')
@@ -131,9 +146,11 @@ class Compiled:
     order: str
     sort: str
     pdf_terms: list
+    descending: bool = False
 
 
-def compile_query(source='', facets=None):
+def compile_query(source='', facets=None, sort=None):
+    """`sort`, when given, overrides any sort: directive in the query (a clicked column header)."""
     ast = Parser(source).parse()
     params, sorts, pdf_terms = [], [], []
     def bound(v): params.append(v); return '?'
@@ -154,7 +171,7 @@ def compile_query(source='', facets=None):
         if cmp != '=': raise QueryError(f'Comparisons are not supported for {key}', n.pos)
         if key == 'sort':
             if not allow_sort: raise QueryError('sort must be outside OR and NOT', n.pos)
-            name = value.lstrip('-')
+            name = value.lstrip('+-')
             if name not in SORTS: raise QueryError('Unknown sort column: ' + name, n.pos)
             if sorts: raise QueryError('Use only one sort directive', n.pos)
             sorts.append(value); return '1'
@@ -202,7 +219,6 @@ def compile_query(source='', facets=None):
             where += f' AND p.{key} IN (' + ','.join(bound(v) for v in values) + ')'
         else:
             where += ' AND (' + ' OR '.join(walk(Node('filter',('has','=',v))) for v in values) + ')'
-    sort = sorts[0] if sorts else '-added'
-    name = sort.lstrip('-')
-    direction = 'DESC' if sort.startswith('-') or (not sort.startswith('-') and name in SCORES) else 'ASC'
-    return Compiled(where, params, f'p.{SORTS[name]} {direction} NULLS LAST, p.id ASC', sort, pdf_terms)
+    sort = sort or (sorts[0] if sorts else '-added')
+    order, descending = sort_order(sort)
+    return Compiled(where, params, order, sort, pdf_terms, descending)
