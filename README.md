@@ -128,6 +128,7 @@ The process reads environment variables directly; it does not load a `.env` file
 | `CORPUS_VENUE_CHECKS` | `1` | Set to `0` to stop background checks for the published versions of arXiv preprints. **CHECK NOW** in the detail pane still works. |
 | `CORPUS_VENUE_CHECK_INTERVAL` | `5` | Seconds between two papers' published-version lookups. |
 | `CORPUS_S2_API_KEY` | empty | Free [Semantic Scholar API key](https://www.semanticscholar.org/product/api#api-key-form). Without it, Semantic Scholar rate-limits most lookups, and ICLR/ICML/AISTATS papers are usually only found if OpenAlex knows them. |
+| `CORPUS_S2_INTERVAL` | `0` (auto) | Minimum seconds between two Semantic Scholar requests, shared by every account's background checks and **CHECK NOW**. Auto is 1.1 s with a key (its limit is 1 request per second) and 3 s without. Requests wait their turn; on HTTP 429 every lookup pauses (honouring `Retry-After`, otherwise 5 s doubling up to 60 s) and the request is retried twice. |
 | `CORPUS_OPENALEX_API_KEY` | empty | Optional OpenAlex API key. Lookups work without one. |
 | `CORPUS_DEV` | `0` | Disable login for loopback development only. Prefer `run.py --dev`. |
 
