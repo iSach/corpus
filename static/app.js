@@ -77,7 +77,8 @@
     limit: 100,
     sort: 'rel',
     resultFacets: {},
-    fieldCounts: [],
+    facetTotals: {},
+    facetUniverse: {},
     queryError: '',
     selectedId: null,
     selectedDetail: null,
@@ -312,12 +313,15 @@
     state.loadingPapers = true;
     render();
     try {
-      const fieldFacets = buildFacetPayload();
-      delete fieldFacets.field;
-      const fieldParams = new URLSearchParams({ q: state.q, facets: JSON.stringify(fieldFacets), limit: '1', offset: '0' });
-      const [data, fieldData] = await Promise.all([
+      // Facet sections stay put while filtering: the option list comes from the
+      // query without any facets, and a section's counts ignore its own ticks.
+      const payload = buildFacetPayload();
+      const activeKeys = FACET_KEYS.filter(key => (state.facetFilters[key] || []).length);
+      const countQuery = facets => api(`/api/papers?${new URLSearchParams({ q: state.q, facets: JSON.stringify(facets), limit: '1', offset: '0' })}`);
+      const [data, baseData, ...ownData] = await Promise.all([
         api(`/api/papers?${params}`),
-        state.facetFilters.field.length ? api(`/api/papers?${fieldParams}`) : Promise.resolve(null)
+        Object.keys(payload).length ? countQuery({}) : Promise.resolve(null),
+        ...activeKeys.map(key => { const facets = { ...payload }; delete facets[key]; return countQuery(facets); })
       ]);
       if (requestId !== papersRequest) return;
       state.papers = Array.isArray(data.papers) ? data.papers : [];
@@ -326,7 +330,9 @@
       state.elapsed = data.elapsed_ms == null ? null : data.elapsed_ms;
       state.sort = data.sort || state.sort;
       state.resultFacets = data.facets || {};
-      state.fieldCounts = (fieldData || data).facets?.field || [];
+      state.facetTotals = { ...state.resultFacets };
+      activeKeys.forEach((key, index) => { state.facetTotals[key] = ownData[index].facets?.[key] || []; });
+      state.facetUniverse = (baseData || data).facets || {};
       state.queryError = '';
       if (!state.papers.length) { state.selectedId = null; state.selectedDetail = null; ++paperRequest; state.selectedLoading = false; }
       if (state.selectedId && !state.papers.some(p => String(p.id) === String(state.selectedId)) && state.papers.length) {
@@ -1333,8 +1339,8 @@
     return h('div', { class: 'sql-result', 'data-scroll-key': 'sql-result' }, h('div', { class: 'sql-meta' }, `${rows.length} rows${result.elapsed_ms == null ? '' : ` · ${result.elapsed_ms} ms`}${result.truncated ? ' · truncated' : ''}`), table);
   }
 
-  function facetRows(key) {
-    const raw = state.resultFacets && state.resultFacets[key];
+  function facetRows(source, key) {
+    const raw = source && source[key];
     if (!Array.isArray(raw)) return [];
     return raw.map(item => typeof item === 'object' && item !== null ? { value: item.value == null ? item.label : item.value, count: item.count } : { value: item, count: null }).filter(item => item.value != null);
   }
@@ -1342,19 +1348,21 @@
     const sections = [
       ['field', 'TOPICS'], ['state', 'STATUS'], ['has', 'ARTIFACTS'], ['venue_class', 'VENUE'], ['year', 'YEAR']
     ].map(([key, title]) => {
-      const rows = key === 'field' ? (state.config.fields || []).map(field => ({ value: field.id, count: (state.fieldCounts.find(row => String(row.value) === String(field.id)) || {}).count || 0, visibleCount: (facetRows(key).find(row => String(row.value) === String(field.id)) || {}).count || 0 })) : facetRows(key);
+      const countOf = (source, value) => Number((facetRows(source, key).find(row => String(row.value) === String(value)) || {}).count) || 0;
+      const values = key === 'field' ? (state.config.fields || []).map(field => field.id) : [...facetRows(state.facetUniverse, key).map(row => row.value), ...(state.facetFilters[key] || [])];
+      const rows = [...new Map(values.map(value => [String(value), value])).values()].map(value => ({ value, count: countOf(state.facetTotals, value), visibleCount: countOf(state.resultFacets, value) }));
       if (!rows.length) return null;
       return h('section', { class: 'facet-section' }, h('div', { class: 'facet-title' }, title), ...rows.map(row => {
         const checked = (state.facetFilters[key] || []).some(value => String(value) === String(row.value));
-        const visibleCount = row.visibleCount == null ? row.count : row.visibleCount;
-        const unavailable = visibleCount != null && Number(visibleCount) === 0;
-        // A topic count ignores the ticked topics; when they narrow it, show how many of its papers they share.
-        const partial = row.visibleCount != null && Number(row.visibleCount) !== Number(row.count);
-        const title = unavailable ? 'No matching papers' : partial ? `${row.visibleCount} of ${row.count} papers match the current filters` : '';
+        // A section's count ignores its own ticks. Options with nothing in the current results grey out
+        // instead of disappearing; when the other ticks narrow an option, show how many of its papers remain.
+        const unavailable = row.visibleCount === 0;
+        const partial = !unavailable && row.visibleCount !== row.count;
+        const title = unavailable ? (row.count ? `None in the current results; ${row.count} with the other filters` : 'No matching papers') : partial ? `${row.visibleCount} of ${row.count} papers match the current filters` : '';
         return h('label', { class: `facet-option${unavailable ? ' facet-option-empty' : ''}`, title },
           h('input', { type: 'checkbox', checked, onchange: event => toggleFacet(key, row.value, event.target.checked) }),
           h('span', { class: 'facet-label' }, key === 'field' ? projectName(row.value) : row.value),
-          row.count == null ? null : h('span', { class: 'facet-count' }, partial ? `${row.visibleCount} / ${row.count}` : row.count)
+          h('span', { class: 'facet-count' }, partial ? `${row.visibleCount} / ${row.count}` : row.count)
         );
       }));
     });
