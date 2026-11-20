@@ -3,20 +3,24 @@ import argparse
 import json
 import re
 
-SYMBOLS = {'', 'triangle', 'circle', 'square', 'diamond', 'star', 'cross', 'hexagon', 'pentagon'}
+SYMBOLS = {'', 'triangle', 'circle', 'square', 'diamond', 'star', 'cross', 'hexagon', 'pentagon',
+           'triangle-down', 'x', 'ring', 'hourglass', 'moon', 'heart', 'bolt', 'drop'}
+# Okabe-Ito colors (minus orange and black), chosen to stay apart with color blindness; see static/app.css.
+COLORS = {'', 'vermillion', 'yellow', 'green', 'sky', 'blue', 'purple'}
 
 
 def list_topics(db):
-    return [dict(row) for row in db.execute('SELECT id,label,description,relevance_criteria,symbol FROM fields ORDER BY rowid')]
+    return [dict(row) for row in db.execute('SELECT id,label,description,relevance_criteria,symbol,color FROM fields ORDER BY rowid')]
 
 
 def save_topic(db, incoming):
     if not isinstance(incoming, dict):
         raise ValueError('A topic must be an object')
     topic = {}
-    old = db.execute('SELECT relevance_criteria,symbol FROM fields WHERE id=?', (incoming.get('id','') if isinstance(incoming.get('id',''),str) else '',)).fetchone()
-    for key in ('id', 'label', 'description', 'relevance_criteria', 'symbol'):
-        value = incoming.get(key, old['relevance_criteria'] if key=='relevance_criteria' and old else old['symbol'] if key=='symbol' and old else '')
+    old = db.execute('SELECT relevance_criteria,symbol,color FROM fields WHERE id=?', (incoming.get('id','') if isinstance(incoming.get('id',''),str) else '',)).fetchone()
+    kept = ('relevance_criteria', 'symbol', 'color')
+    for key in ('id', 'label', 'description', 'relevance_criteria', 'symbol', 'color'):
+        value = incoming.get(key, old[key] if key in kept and old else '')
         if not isinstance(value, str):
             raise ValueError(key + ' must be text')
         topic[key] = value.strip()
@@ -30,10 +34,12 @@ def save_topic(db, incoming):
         raise ValueError('Relevance criteria must contain at most 20,000 characters')
     if topic['symbol'] not in SYMBOLS:
         raise ValueError('Unknown project symbol')
+    if topic['color'] not in COLORS:
+        raise ValueError('Unknown topic color')
     db.execute(
-        'INSERT INTO fields(id,label,description,relevance_criteria,symbol) VALUES(?,?,?,?,?) '
-        'ON CONFLICT(id) DO UPDATE SET label=excluded.label,description=excluded.description,relevance_criteria=excluded.relevance_criteria,symbol=excluded.symbol',
-        (topic['id'], topic['label'], topic['description'], topic['relevance_criteria'], topic['symbol']),
+        'INSERT INTO fields(id,label,description,relevance_criteria,symbol,color) VALUES(?,?,?,?,?,?) '
+        'ON CONFLICT(id) DO UPDATE SET label=excluded.label,description=excluded.description,relevance_criteria=excluded.relevance_criteria,symbol=excluded.symbol,color=excluded.color',
+        (topic['id'], topic['label'], topic['description'], topic['relevance_criteria'], topic['symbol'], topic['color']),
     )
     from .review import prepare_pending
     prepare_pending(db)

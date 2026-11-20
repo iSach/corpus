@@ -73,3 +73,23 @@ def test_triage_save_and_export(page,site):
     with page.expect_download() as download:
         page.get_by_role('button',name='DOWNLOAD .json',exact=True).click()
     assert download.value.suggested_filename=='corpus.json'
+
+
+def test_topic_icon_takes_a_shape_and_a_color_separately(page):
+    page.get_by_role('link',name='Topics',exact=True).click()
+    row=page.locator('.topic-row',has_text='SBI pretraining')
+    row.get_by_role('button',name='Edit SBI pretraining',exact=True).click()
+    editor=page.get_by_role('form',name='Edit topic')
+    colors=editor.get_by_role('group',name='Color')
+    expect(colors.get_by_role('radio',name='Sky',exact=True)).to_be_disabled()
+    editor.get_by_role('radio',name='Moon',exact=True).check()
+    expect(colors.get_by_role('radio',name='Sky',exact=True)).to_be_enabled()
+    colors.get_by_role('radio',name='Sky',exact=True).check()
+    # The shape tiles preview the chosen color.
+    expect(editor.locator('#topic-symbol-moon + .symbol-tile svg')).to_have_class('project-symbol symbol-moon topic-color-sky')
+    editor.get_by_role('button',name='Save topic',exact=True).click()
+    expect(page.get_by_role('form',name='Edit topic')).to_have_count(0)
+    expect(row.locator('.topic-symbol-slot svg')).to_have_class('project-symbol symbol-moon topic-color-sky')
+    # A click on the row's description opens the editor too.
+    page.locator('.topic-row',has_text='Diffusion composition').locator('.topic-description').click()
+    expect(page.get_by_role('form',name='Edit topic')).to_contain_text('Diffusion composition')
