@@ -3,6 +3,8 @@ from pathlib import Path
 import os, json
 from urllib.parse import urlsplit
 
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+
 ROOT = Path(__file__).resolve().parent.parent
 @dataclass
 class Settings:
@@ -32,6 +34,8 @@ class Settings:
     claude_oauth_token: str = field(default_factory=lambda: os.getenv('CLAUDE_CODE_OAUTH_TOKEN',''), repr=False)
     claude_bin: str = field(default_factory=lambda: os.getenv('CORPUS_CLAUDE_BIN','claude'))
     ai_model: str = field(default_factory=lambda: os.getenv('CORPUS_AI_MODEL','claude-opus-5-5'))
+    # How hard Claude thinks per review: low, medium, high, xhigh or max.
+    ai_effort: str = field(default_factory=lambda: os.getenv('CORPUS_AI_EFFORT','high'))
     ai_min_interval: float = field(default_factory=lambda: float(os.getenv('CORPUS_AI_MIN_INTERVAL','180')))
     ai_daily_limit: int = field(default_factory=lambda: int(os.getenv('CORPUS_AI_DAILY_LIMIT','30')))
     # Member libraries are copies of the owner's settings with this unset: a
@@ -61,6 +65,8 @@ class Settings:
             origin.port
         if self.ai_backend not in ('auto','api','cli','off'):
             raise ValueError('CORPUS_AI_BACKEND must be auto, api, cli or off')
+        if self.ai_effort not in EFFORTS:
+            raise ValueError('CORPUS_AI_EFFORT must be low, medium, high, xhigh or max')
         if self.ai_min_interval < 0 or self.ai_daily_limit < 0:
             raise ValueError('AI review pacing cannot be negative')
         if self.smtp_security not in ('starttls','ssl'):
