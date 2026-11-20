@@ -7,7 +7,7 @@ Corpus can ask Claude to review papers. For each paper you get:
 - **Other topics it fits**, among your topics that have a description or criteria.
 - **Quality scores** (credibility, methodological quality, reimplementation), only once Claude has read the full text.
 
-Claude reads the title and abstract, or the paper's text once its PDF has been downloaded. Reviews appear on Inbox cards and in the library's detail pane. They are drafts: Claude never approves or dismisses a paper, never sets your personal scores, and never replaces an assessment you or a discovery agent recorded. Its relevance score and quality scores become the paper's draft scores, which you can accept in Edit details.
+Claude reads the title and abstract, or the paper's text once its PDF has been downloaded. Reviews appear on Inbox cards and in the library's detail pane. Claude's relevance score (for the paper's main topic) and its quality scores become the paper's scores as soon as a review finishes. A later review, for example once the full text has been read, updates them. A score you changed by hand stays: Claude only updates scores that still hold its previous value. Claude never approves or dismisses a paper and never replaces an assessment you or a discovery agent recorded.
 
 ## What gets reviewed, and when
 

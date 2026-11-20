@@ -976,7 +976,7 @@
     if (!state.form) return;
     SCORE_KEYS.forEach(key => { if (state.form.proposed[key] != null) state.form.scores[key] = state.form.proposed[key]; });
     render();
-    toast('Draft scores accepted locally; save to persist');
+    toast('Scores filled in; save to keep them');
   }
 
   function selectPaper(id) {
@@ -1457,6 +1457,11 @@
     const artifacts = artifactKinds(paper);
     const proposed = SCORE_KEYS.map(key => score(paper[`proposed_${key}`]));
     const proposedText = proposed.some(v => v != null) ? proposed.map(v => scoreLabel(v)).join('/') : '—';
+    // Scores that still match Claude's latest review are Claude's; any other set score was changed by hand.
+    const fromClaude = (paper.proposed_reason || '').startsWith('Claude · ');
+    const scored = SCORE_KEYS.filter(key => score(paper[key]) != null);
+    const byHand = scored.filter(key => !fromClaude || score(paper[key]) !== score(paper[`proposed_${key}`]));
+    const scoreSource = !scored.length ? 'not yet scored' : !byHand.length ? 'scored by Claude' : byHand.length === scored.length ? 'scored by me' : `${byHand.map(key => SCORE_LABELS[key]).join(', ')} set by me, the rest by Claude`;
     const scoreRows = SCORE_KEYS.map(key => {
       const n = score(paper[key]);
       return h('div', { class: 'detail-score-row' }, h('span', { class: 'detail-score-label' }, SCORE_LABELS[key]), h('span', { class: 'detail-score-track' }, h('i', { style: { width: n == null ? '0%' : `${n * 10}%` } })), h('span', { class: 'detail-score-value' }, scoreLabel(n), n == null ? '' : '/10'));
@@ -1481,7 +1486,7 @@
       renderPublication(paper),
       renderClaude(paper),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('div', { class: 'detail-abstract' }, paper.abstract || h('span', { class: 'soft' }, 'No abstract'))),
-      h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${SCORE_KEYS.some(key => score(paper[key]) != null) ? 'scored by me' : 'not yet scored'} · draft ${proposedText}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
+      h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'SCORES'), ...scoreRows, h('div', { class: 'soft', style: { marginTop: '3px', font: '9.5px var(--mono)' } }, `${scoreSource}${byHand.length || !fromClaude ? ` · ${fromClaude ? 'Claude' : 'suggested'} ${proposedText}` : ''}${paper.proposed_reason ? ` · ${paper.proposed_reason}` : ''}`)),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ARTIFACTS'), h('div', { class: 'artifact-list' }, paperLinks, artifactLinks)),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'MY NOTE'), h('div', { class: 'detail-note' }, noteNode)),
       h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'PDF FULL-TEXT HITS'), ...hitNodes),
@@ -1677,8 +1682,8 @@
           renderClaude(paper),
           renderReviewEvidence(paper),
           h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'ABSTRACT'), h('p', { class: 'detail-abstract inbox-abstract' }, paper.abstract || 'No abstract available.')),
-          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, (paper.proposed_reason || '').startsWith('Claude draft · ') ? 'CLAUDE DRAFT SCORES' : 'IMPORTER SUGGESTION'),
-            h('div', { class: 'review-hint' }, (paper.proposed_reason || '').startsWith('Claude draft · ') ? `${paper.proposed_reason.includes(' · full text.') ? 'Full text' : 'Abstract only'} · ${SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${paper['proposed_' + key] == null ? 'unknown' : scoreLabel(paper['proposed_' + key]) + '/10'}`).join(' · ')}` : `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
+          paper.proposed_reason || paper.proposed_rel != null ? h('section', { class: 'detail-section inbox-suggestion' }, h('div', { class: 'panel-title' }, (paper.proposed_reason || '').startsWith('Claude · ') ? 'CLAUDE SCORES' : 'IMPORTER SUGGESTION'),
+            h('div', { class: 'review-hint' }, (paper.proposed_reason || '').startsWith('Claude · ') ? `${paper.proposed_reason.includes(' · full text.') ? 'Full text' : 'Abstract only'} · ${SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${paper['proposed_' + key] == null ? 'unknown' : scoreLabel(paper['proposed_' + key]) + '/10'}`).join(' · ')}` : `${paper.proposed_rel == null ? '' : `Suggested relevance ${scoreLabel(paper.proposed_rel)}/10 · `}evidence not specified`),
             paper.proposed_reason ? h('p', { class: 'inbox-reason' }, paper.proposed_reason) : null) : null,
           paper.notes ? h('section', { class: 'detail-section' }, h('div', { class: 'panel-title' }, 'MY NOTE'), h('div', { class: 'detail-note' }, paper.notes_html ? sanitizeNotesHTML(paper.notes_html) : paper.notes)) : null,
           h('section', { class: 'detail-section' }, h('details', { class: 'inbox-provenance', 'data-disclosure-key': `discovery:${paper.id}` }, h('summary', null, 'Discovery history'),
@@ -1783,7 +1788,7 @@
     const proposed = state.form ? state.form.proposed : {};
     const values = SCORE_KEYS.map(key => `${SCORE_LABELS[key]}: ${scoreLabel(proposed[key])}`).join(' · ');
     const candidates = state.duplicateCandidates || [];
-    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'CLAUDE / IMPORTER DRAFT'), h('p', { class: 'draft-values draft-reason' }, state.form && state.form.review && state.form.review.ai ? `Claude: ${claudeStatus(state.form.review.ai)} · ${state.form.review.ai.model}` : state.config.ai_review && state.config.ai_review.enabled ? 'Claude reviews Inbox papers automatically.' : 'Claude reviews are not configured.'), state.form && state.form.review && state.form.review.current ? h('p', { class: 'draft-values draft-reason' }, `${state.form.review.current.assessor === 'not-assessed' ? 'Awaiting review' : assessorLabel(state.form.review.current.assessor)}: ${state.form.review.current.explanation}`) : null, h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'ACCEPT DRAFT SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
+    return h('aside', { class: 'entry-rail' }, h('div', { class: 'panel-title' }, 'CLAUDE / IMPORTER SCORES'), h('p', { class: 'draft-values draft-reason' }, state.form && state.form.review && state.form.review.ai ? `Claude: ${claudeStatus(state.form.review.ai)} · ${state.form.review.ai.model}` : state.config.ai_review && state.config.ai_review.enabled ? 'Claude reviews Inbox papers automatically.' : 'Claude reviews are not configured.'), state.form && state.form.review && state.form.review.current ? h('p', { class: 'draft-values draft-reason' }, `${state.form.review.current.assessor === 'not-assessed' ? 'Awaiting review' : assessorLabel(state.form.review.current.assessor)}: ${state.form.review.current.explanation}`) : null, h('div', { class: 'draft-values' }, values), state.form && state.form.proposed_reason ? h('div', { class: 'draft-values draft-reason' }, `reason: ${state.form.proposed_reason}`) : h('div', { class: 'draft-values draft-reason' }, 'No proposed scores.'), h('button', { class: 'btn btn-primary', type: 'button', onclick: acceptDraft, disabled: !SCORE_KEYS.some(key => proposed[key] != null) }, 'USE THESE SCORES'), h('div', { class: 'rail-rule' }), h('div', { class: 'panel-title' }, 'NEAR-DUPLICATES'), state.duplicateLoading ? h('div', { class: 'duplicate-row' }, 'checking…') : candidates.length ? candidates.map(candidate => h('div', { class: 'duplicate-row' }, h('button', { type: 'button', onclick: () => openDuplicateCandidate(candidate) }, `${fmt(candidate.similarity)} — ${fmt(candidate.title)}`))) : h('div', { class: 'duplicate-row' }, 'No candidates.'), state.form && state.form.id ? h('div', { class: 'rail-rule' }) : null, state.form && state.form.id ? h('div', { class: 'draft-values draft-reason' }, `editing ${state.form.id}`) : null);
   }
 
   function renderExport() {
