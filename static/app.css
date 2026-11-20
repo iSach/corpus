@@ -653,17 +653,38 @@ body.pdf-drop-active::after { content: 'DROP PDFS TO IMPORT'; position: fixed; i
 .symbol-choice-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .inbox-item-meta .project-name { margin-right: 0; }
 
-/* Account administration follows the existing compact settings panels. */
-.admin-panel h2 { margin: 22px 0 8px; font: 600 18px var(--display); }
-.service-settings { margin-top: 8px; }
-.service-key { margin: 12px 0; }
-.service-key-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font: 10.5px/1.4 var(--mono); }
+/* Account administration: people on the left, server-wide services on the right. */
+.admin-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100%; font-size: 12.5px; line-height: 1.5; }
+.admin-head { grid-column: 1 / -1; padding: 8px 14px 10px; border-bottom: 1px solid var(--line); }
+.admin-head h1 { margin: 0 0 2px; font: 600 22px/1.15 var(--display); }
+.admin-head p { margin: 0; }
+.admin-head .notice { margin-top: 8px; }
+.admin-column { min-width: 0; padding: 4px 14px 24px; }
+.admin-column + .admin-column { border-left: 1px solid var(--line); background: var(--surface-2); }
+.admin-column h2 { margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font: 600 18px/1.2 var(--display); }
+.admin-column > .notice { margin: 8px 0; }
+.admin-column .account-actions { margin: 0; }
+.admin-invite { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.admin-invite-field { flex: 1 1 260px; min-width: 0; }
+.admin-invite-field label { margin-top: 0; }
+.admin-column .account-row { padding: 9px 0; }
+.service-key { margin: 10px 0 14px; }
+.service-key-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; font: 10.5px/1.4 var(--mono); }
+.service-key-head label { margin: 0; color: var(--muted); }
 .service-key-input { display: flex; gap: 6px; margin-top: 4px; }
 .service-key-input .input { flex: 1; min-width: 0; }
+.service-key .soft { margin: 4px 0 0; }
+.service-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-bottom: 10px; }
 .account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-.invitation-result { padding: 14px; margin: 16px 0; border: 1px solid var(--line); background: var(--surface-2); }
+.invitation-result { padding: 12px 14px; margin: 12px 0; border: 1px solid var(--line); background: var(--surface-2); }
 .invitation-result .input { width: 100%; }
+.invitation-result .account-actions { margin-top: 8px; }
+@media (max-width: 900px) {
+  .admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .admin-column + .admin-column { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 480px) { .service-options { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .account-row { align-items: flex-start; flex-direction: column; gap: 4px; } }
 
 
