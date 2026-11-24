@@ -105,6 +105,7 @@
     topicOriginal: '',
     topicForm: null,
     topicSaving: false,
+    topicDraft: null,
     passkeySettings: { keys: [], loading: false, error: '', name: 'iCloud Keychain', password: '', busy: false },
     passkeyLoginBusy: false,
     passkeyLoginError: '',
@@ -490,6 +491,41 @@
       toast('Topic saved');
     } catch (error) { state.topicsError = getError(error); }
     finally { state.topicSaving = false; render(); }
+  }
+
+  // Claude drafts relevance criteria from the topic's papers; the draft fills the
+  // editor and is saved like any edit. The request returns at once and is polled.
+  async function draftCriteria() {
+    const form = state.topicForm;
+    if (!form || !form.existing || (state.topicDraft && state.topicDraft.status === 'running')) return;
+    const id = form.id;
+    state.topicDraft = { id, status: 'running' };
+    render();
+    try {
+      let draft = await api('/api/topics/criteria-draft', { method: 'POST', body: { id } });
+      while (draft.status === 'running') {
+        state.topicDraft = { id, ...draft };
+        render();
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (!state.topicDraft || state.topicDraft.id !== id) return;
+        draft = await api(`/api/topics/criteria-draft?id=${encodeURIComponent(id)}`);
+      }
+      state.topicDraft = { id, ...draft };
+      if (draft.status === 'complete' && state.topicForm && state.topicForm.id === id) {
+        state.topicForm.relevance_criteria = draft.criteria;
+        toast('Claude drafted the criteria. Review them, then save the topic.');
+      }
+    } catch (error) { state.topicDraft = { id, status: 'failed', error: getError(error) }; }
+    render();
+  }
+
+  function criteriaDraftStatus(form) {
+    const draft = state.topicDraft && state.topicDraft.id === form.id ? state.topicDraft : null;
+    if (!draft) return null;
+    if (draft.status === 'running') return h('p', { class: 'topic-help topic-draft-status', role: 'status' }, draft.papers ? `Claude is reading ${draft.papers} papers${draft.dismissed ? ` and ${draft.dismissed} dismissed ones` : ''}…` : 'Asking Claude…');
+    if (draft.status === 'failed') return h('p', { class: 'topic-help error-text', role: 'alert' }, draft.error || 'Claude could not draft the criteria.');
+    if (draft.status === 'complete') return h('p', { class: 'topic-help topic-draft-status', role: 'status' }, `Drafted by Claude from ${draft.papers} papers${draft.dismissed ? ` and ${draft.dismissed} dismissed ones` : ''}. ${draft.basis || ''} Saving changed criteria queues this topic's papers for a fresh Claude review.`);
+    return null;
   }
 
   function markInboxSeen() {
@@ -1944,6 +1980,7 @@
     if (state.topicForm && JSON.stringify(state.topicForm) !== state.topicOriginal && !window.confirm('Discard unsaved topic changes?')) return false;
     state.topicForm = null;
     state.topicsError = '';
+    if (state.topicDraft && state.topicDraft.status !== 'running') state.topicDraft = null;
     return true;
   }
 
@@ -1998,8 +2035,10 @@
           h('p', { class: 'topic-help' }, form.symbol ? 'Okabe-Ito colors, chosen to stay distinct with common color blindness; the shape still does most of the work.' : 'Pick a shape first.')),
         h('label', { for: 'topic-description' }, 'Research description'),
         h('textarea', { id: 'topic-description', class: 'input topic-description-input', value: form.description, rows: 4, maxlength: 20000, placeholder: 'What questions does this topic cover?', oninput: event => { form.description = event.target.value; } }),
-        h('label', { for: 'topic-criteria' }, 'Relevance criteria'),
+        h('div', { class: 'topic-criteria-heading' }, h('label', { for: 'topic-criteria' }, 'Relevance criteria'),
+          form.existing && state.config.ai_review && state.config.ai_review.enabled ? h('button', { class: 'btn', type: 'button', disabled: Boolean(state.topicDraft && state.topicDraft.status === 'running'), title: "Ask Claude to infer the criteria from the papers filed under this topic, keeping what's already written", onclick: draftCriteria }, state.topicDraft && state.topicDraft.id === form.id && state.topicDraft.status === 'running' ? 'Drafting…' : (form.relevance_criteria ? 'Refine with Claude' : 'Draft with Claude')) : null),
         h('p', { id: 'topic-criteria-help', class: 'topic-help' }, 'Describe which papers belong here to guide relevance assessments.'),
+        criteriaDraftStatus(form),
         h('textarea', { id: 'topic-criteria', class: 'input topic-description-input', value: form.relevance_criteria || '', rows: 5, maxlength: 20000, 'aria-describedby': 'topic-criteria-help', placeholder: 'Include methods, applications, or evidence to look for…', oninput: event => { form.relevance_criteria = event.target.value; } })),
       state.topicsError ? h('div', { class: 'notice error-text', role: 'alert' }, state.topicsError) : null,
       h('footer', { class: 'topic-editor-actions' }, h('button', { class: 'btn', type: 'button', disabled: state.topicSaving, onclick: () => { if (closeTopicEditor()) render(); } }, 'Cancel'), h('button', { class: 'btn btn-primary', type: 'submit', disabled: state.topicSaving }, state.topicSaving ? 'Saving…' : 'Save topic'))

@@ -78,3 +78,31 @@ def test_claude_review_runs_in_background_and_shows_in_inbox(tmp_path, browser, 
         page.get_by_role('button', name='RESUME NOW', exact=True).click()
         expect(page.locator('.claude-state')).to_have_text('All caught up')
         expect(page.get_by_role('link', name='Claude', exact=True)).to_be_visible()
+
+
+def test_claude_drafts_topic_criteria_into_the_editor(tmp_path, browser, monkeypatch):
+    from corpus.db import connection
+    drafted = 'Core: surrogate solvers that transfer to unseen regimes.\nNot relevant:\n- image benchmarks'
+    monkeypatch.setattr(ai_review, 'generate', lambda settings, prompt, system=None, schema=None:
+                        ({'criteria': drafted, 'basis': 'Based on three solver papers.'}, {}))
+    settings = Settings(data_dir=tmp_path, dev=True, pdf_jobs=False, ingest_token='criteria-token', anthropic_api_key='fake')
+    with serve(lambda origin: settings) as site, open_page(browser, height=1000) as page:
+        for i, title in enumerate(('Regime transfer for surrogates', 'Operator learning out of distribution', 'Stability of learned PDE solvers')):
+            response = page.request.post(site + '/api/ingest', headers={'Authorization': 'Bearer criteria-token'},
+                                         data={'papers': [{'title': title, 'authors': ['Fixture Author'],
+                                                           'abstract': 'Surrogates evaluated on unseen regimes.', 'doi': f'10.5555/criteria-{i}'}]})
+            assert response.ok
+        with connection(settings) as db:
+            db.execute("UPDATE papers SET admission='approved'")
+            field = db.execute('SELECT field FROM papers LIMIT 1').fetchone()[0]
+        page.goto(site + '/?screen=topics')
+        page.locator('.topic-name-button').first.click()
+        page.get_by_role('button', name='Draft with Claude', exact=True).click()
+        expect(page.locator('#topic-criteria')).to_have_value(drafted)
+        expect(page.locator('.topic-draft-status')).to_contain_text('Drafted by Claude from 3 papers. Based on three solver papers.')
+        # Nothing is stored until the topic is saved.
+        assert all(t['relevance_criteria'] == '' for t in page.request.get(site + '/api/topics').json()['topics'])
+        page.get_by_role('button', name='Save topic', exact=True).click()
+        expect(page.locator('.topic-criteria-status.configured')).to_have_count(1)
+        saved = {t['id']: t for t in page.request.get(site + '/api/topics').json()['topics']}
+        assert saved[field]['relevance_criteria'] == drafted
