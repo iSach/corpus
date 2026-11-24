@@ -15,6 +15,7 @@ from .ai_review import worker as ai_worker, enabled as ai_enabled, backend as ai
 from .jobs import worker
 from .sources import fetch_metadata, MetadataFetchError
 from .topics import list_topics, save_topic
+from .topic_criteria import install_routes as install_criteria_routes
 from .passkeys import Passkeys, install_routes as install_passkey_routes
 from .inbox import install_routes as install_inbox_routes
 from .review import install_routes as install_review_routes, prepare_pending, save_assessment
@@ -225,6 +226,7 @@ def create_app(settings=None):
     install_inbox_routes(app,settings)
     install_review_routes(app,settings)
     install_ai_routes(app,settings)
+    install_criteria_routes(app,settings)
     install_capture_routes(app,settings,limits)
     install_venue_routes(app,settings,limits)
     @app.post('/api/logout')

@@ -396,11 +396,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .topic-editor h2 { margin: 0; font: 600 22px/1.2 var(--display); }
 .topic-editor-heading p { margin: 4px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .topic-editor-fields { margin: 0; border: 0; padding: 4px 20px 16px; min-width: 0; flex: 1; overflow: auto; }
-.topic-editor-fields > label, .symbol-picker legend { display: block; margin: 12px 0 5px; font: 500 11px/1.4 var(--mono); color: var(--ink-2); }
+.topic-editor-fields > label, .topic-criteria-heading label, .symbol-picker legend { display: block; margin: 12px 0 5px; font: 500 11px/1.4 var(--mono); color: var(--ink-2); }
 .topic-editor .input { width: 100%; padding: 7px 8px; font-size: 12px; background: var(--bg); }
 .topic-editor .input:disabled { color: var(--muted); background: var(--surface); }
 .topic-editor .topic-description-input { min-height: 84px; resize: vertical; line-height: 1.6; }
 .topic-help { margin: 5px 0; font: 11px/1.5 var(--serif); color: var(--muted); }
+.topic-criteria-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.topic-criteria-heading .btn { margin-bottom: 4px; padding: 3px 8px; font-size: 11px; }
+.topic-draft-status { color: var(--accent-dark); }
 .topic-editor-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--bg); }
 .topics-layout .btn { min-height: 32px; padding: 5px 10px; font-size: 11px; }
 @media (max-width: 1050px) { .editing .topic-criteria-status { display: none; } }

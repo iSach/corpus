@@ -382,7 +382,7 @@ def _reset_time(message, now):
     return reset.timestamp()
 
 
-def run_cli(settings, user_prompt, now=None):
+def run_cli(settings, user_prompt, now=None, system=SYSTEM, schema=SCHEMA):
     """One ``claude -p`` call with no tools, settings, memory or saved session."""
     home = Path(settings.ai_state_file).parent / 'claude-home'
     home.mkdir(mode=0o700, exist_ok=True)
@@ -392,8 +392,8 @@ def run_cli(settings, user_prompt, now=None):
         env.update(HOME=str(home), CLAUDE_CODE_OAUTH_TOKEN=settings.claude_oauth_token)
     env.update(DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
     command = [settings.claude_bin, '-p', '--model', settings.ai_model, '--effort', settings.ai_effort, '--output-format', 'json',
-               '--json-schema', json.dumps(SCHEMA), '--tools', '', '--setting-sources', '', '--no-session-persistence',
-               '--system-prompt', SYSTEM]
+               '--json-schema', json.dumps(schema), '--tools', '', '--setting-sources', '', '--no-session-persistence',
+               '--system-prompt', system]
     try:
         done = subprocess.run(command, input=user_prompt, capture_output=True, text=True, timeout=900, env=env, cwd=home)
     except FileNotFoundError:
@@ -431,13 +431,13 @@ PRICES = {'claude-opus-5-5': (4, 20), 'claude-sonnet-5-5': (2, 10), 'claude-haik
 FALLBACK_MODELS = ('claude-fable-5-2', 'claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5')
 
 
-def run_api(settings, user_prompt):
+def run_api(settings, user_prompt, system=SYSTEM, schema=SCHEMA):
     import anthropic
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=1, timeout=600)
     params = dict(model=settings.ai_model, max_tokens=16000,
-                  system=[{'type': 'text', 'text': SYSTEM, 'cache_control': {'type': 'ephemeral'}}],
+                  system=[{'type': 'text', 'text': system, 'cache_control': {'type': 'ephemeral'}}],
                   messages=[{'role': 'user', 'content': user_prompt}],
-                  output_config={'effort': settings.ai_effort, 'format': {'type': 'json_schema', 'schema': SCHEMA}})
+                  output_config={'effort': settings.ai_effort, 'format': {'type': 'json_schema', 'schema': schema}})
     try:
         if settings.ai_model in FALLBACK_MODELS:
             # A paper that trips a safety classifier is retried on a fallback model.
@@ -473,12 +473,12 @@ def run_api(settings, user_prompt):
         raise ReviewError('Claude returned malformed JSON') from None
 
 
-def generate(settings, user_prompt):
+def generate(settings, user_prompt, system=SYSTEM, schema=SCHEMA):
     kind = backend(settings)
     if kind == 'cli':
-        return run_cli(settings, user_prompt)
+        return run_cli(settings, user_prompt, system=system, schema=schema)
     if kind == 'api':
-        return run_api(settings, user_prompt)
+        return run_api(settings, user_prompt, system=system, schema=schema)
     raise Unavailable('Claude reviews are not configured')
 
 
